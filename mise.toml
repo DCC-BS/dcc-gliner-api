@@ -1,9 +1,24 @@
 [tools]
 uv = "0.11.31"
 
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+[tasks.install]
+description = "🚀 Creating virtual environment using uv"
+alias = "i"
+sources = ["pyproject.toml", "uv.lock"]
+outputs = [".venv"]
+run = [
+    "uv sync",
+]
+
+# ── Run ────────────────────────────────────────────────────────────────────────
+
 [tasks.dev]
 description = "Start the Ray Serve server"
 run = "uv run ray serve run src.dcc_gliner_api.app:app"
+
+# ── Docker ──────────────────────────────────────────────────────────────────
 
 [tasks."docker:up"]
 description = "Build and start the Docker Compose stack"
@@ -17,6 +32,8 @@ run = "docker compose down"
 description = "Tail docker compose logs (follow mode)"
 alias = "logs"
 run = "docker compose logs -f"
+
+# ── Quality ─────────────────────────────────────────────────────────────────
 
 [tasks.check]
 description = "Verify lockfile, format code, lint, and type-check"
