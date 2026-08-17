@@ -1,4 +1,5 @@
 """Pydantic request models for the GLiNER2 API, grouped by capability."""
+
 from .classification import BatchClassifyTextRequest, ClassifyTextRequest
 from .common import (
     BatchOptions,
@@ -9,7 +10,7 @@ from .common import (
     TasksSpec,
     ValidatorSpec,
 )
-from .entities import BatchExtractEntitiesRequest, ExtractEntitiesRequest, PredictModel
+from .entities import BatchExtractEntitiesRequest, ExtractEntitiesRequest
 from .relations import BatchExtractRelationsRequest, ExtractRelationsRequest
 from .schema import BatchExtractRequest, ExtractRequest
 from .structured import BatchExtractJsonRequest, ExtractJsonRequest
@@ -29,7 +30,6 @@ __all__ = [
     "ExtractRelationsRequest",
     "ExtractRequest",
     "FieldSpec",
-    "PredictModel",
     "RelationTypes",
     "TasksSpec",
     "ValidatorSpec",

@@ -1,4 +1,5 @@
 """Shared option models and type aliases used across all request models."""
+
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -12,9 +13,15 @@ TasksSpec = Dict[str, Any]
 
 class ExtractOptions(BaseModel):
     threshold: float = Field(0.5, ge=0.0, le=1.0, description="Confidence threshold")
-    include_confidence: bool = Field(False, description="Attach confidence scores to results")
-    include_spans: bool = Field(False, description="Attach character spans (start/end) to results")
-    max_len: Optional[int] = Field(None, description="Max input tokens for the encoder window")
+    include_confidence: bool = Field(
+        False, description="Attach confidence scores to results"
+    )
+    include_spans: bool = Field(
+        False, description="Attach character spans (start/end) to results"
+    )
+    max_len: Optional[int] = Field(
+        None, description="Max input tokens for the encoder window"
+    )
 
 
 class BatchOptions(BaseModel):

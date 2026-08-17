@@ -1,4 +1,5 @@
 """Request models for multi-task schema extraction endpoints."""
+
 from typing import Any, Dict, List, Union
 
 from pydantic import Field
@@ -7,13 +8,18 @@ from .common import BatchOptions, ExtractOptions
 
 SCHEMA_EXAMPLE = {
     "entities": {"person": "Names of people", "company": "Organization names"},
-    "classifications": [{"task": "sentiment", "labels": ["positive", "negative", "neutral"]}],
+    "classifications": [
+        {"task": "sentiment", "labels": ["positive", "negative", "neutral"]}
+    ],
     "relations": ["works_for", "located_in"],
     "structures": {
         "product_info": {
             "fields": [
                 {"name": "name", "dtype": "str", "description": "Product name"},
-                {"name": "price", "validators": [{"pattern": r"^\$[\d,.]+$", "mode": "full"}]},
+                {
+                    "name": "price",
+                    "validators": [{"pattern": r"^\$[\d,.]+$", "mode": "full"}],
+                },
             ]
         }
     },

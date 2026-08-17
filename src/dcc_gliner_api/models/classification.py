@@ -1,4 +1,5 @@
 """Request models for text classification endpoints."""
+
 from typing import Any, Dict, List
 
 from pydantic import Field

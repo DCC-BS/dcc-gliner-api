@@ -1,4 +1,5 @@
 """Request models for structured (JSON) data extraction endpoints."""
+
 from typing import Dict, List
 
 from pydantic import Field

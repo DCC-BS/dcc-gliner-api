@@ -25,7 +25,7 @@ run = [
     "uv lock --locked",
     "uv run ruff format",
     "uv run ruff check --fix",
-    "uv run ty check ./src/anony_mate_backend",
+    "uv run ty check ./src/dcc_gliner_api",
 ]
 
 [tasks.ci-check]
@@ -34,5 +34,5 @@ run = [
     "uv lock --locked",
     "uv run ruff format --check",
     "uv run ruff check",
-    "uv run ty check ./src/anony_mate_backend",
+    "uv run ty check ./src/dcc_gliner_api",
 ]

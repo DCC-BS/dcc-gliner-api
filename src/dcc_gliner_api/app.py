@@ -8,6 +8,7 @@ Capabilities (https://github.com/fastino-ai/GLiNER2):
 - Multi-task schema extraction (compose all of the above, incl. regex validators)
 - Batch variants of all of the above
 """
+
 import os
 from typing import Any, Dict, List, Optional
 
@@ -28,7 +29,6 @@ from .models import (
     ExtractJsonRequest,
     ExtractRelationsRequest,
     ExtractRequest,
-    PredictModel,
     ValidatorSpec,
 )
 
@@ -223,4 +223,4 @@ class GLiNER2Deployment:
         )
 
 
-app = GLiNER2Deployment.bind()
+app = GLiNER2Deployment.bind()  # ty: ignore[unresolved-attribute]  # added by @serve.deployment
