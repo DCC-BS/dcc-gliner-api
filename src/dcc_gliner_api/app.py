@@ -39,7 +39,20 @@ from .models import (
     ValidatorSpec,
 )
 
-MODEL_ID = os.environ.get("GLINER_MODEL", "fastino/gliner2-base-v1")
+MODEL_ID = os.environ.get("GLINER_MODEL", "fastino/gliner2-multi-v1")
+
+
+def _device() -> str:
+    """Device to load the model onto.
+
+    GLiNER2 keeps the model on the CPU unless `map_location` is passed, so an
+    unset GLINER_DEVICE must still resolve to the GPU when one is available.
+    """
+    import torch
+
+    default = "cuda" if torch.cuda.is_available() else "cpu"
+    return os.environ.get("GLINER_DEVICE", default)
+
 
 app = FastAPI(
     title="GLiNER2 API",
@@ -106,7 +119,7 @@ class GLiNER2Deployment:
     def __init__(self):
         self.model: GLiNER2 = GLiNER2.from_pretrained(
             MODEL_ID,
-            quantize=os.environ.get("GLINER_QUANTIZE", "").lower() in ("1", "true"),
+            map_location=_device(),
             compile=os.environ.get("GLINER_COMPILE", "").lower() in ("1", "true"),
         )
 

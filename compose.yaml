@@ -4,8 +4,19 @@ services:
     container_name: dcc-gliner-api
     ports:
       - "8000:8000"
+    environment:
+      GLINER_MODEL: ${GLINER_MODEL:-fastino/gliner2-multi-v1}
+      GLINER_DEVICE: ${GLINER_DEVICE:-cuda}
+      GLINER_COMPILE: ${GLINER_COMPILE:-0}
     volumes:
       - hf-cache:/app/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
 
 volumes:
