@@ -1,6 +1,6 @@
 """Request models for text classification endpoints."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import Field
 
@@ -17,5 +17,5 @@ class ClassifyTextRequest(ExtractOptions):
 
 
 class BatchClassifyTextRequest(ExtractOptions, BatchOptions):
-    texts: List[str]
-    tasks: Dict[str, Any]
+    texts: list[str]
+    tasks: dict[str, Any]

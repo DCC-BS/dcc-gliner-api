@@ -1,7 +1,5 @@
 """Request models for relation extraction endpoints."""
 
-from typing import List
-
 from pydantic import Field
 
 from .common import BatchOptions, ExtractOptions, RelationTypes
@@ -15,5 +13,5 @@ class ExtractRelationsRequest(ExtractOptions):
 
 
 class BatchExtractRelationsRequest(ExtractOptions, BatchOptions):
-    texts: List[str]
+    texts: list[str]
     relation_types: RelationTypes

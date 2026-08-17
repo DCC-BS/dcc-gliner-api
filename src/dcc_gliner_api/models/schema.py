@@ -1,6 +1,6 @@
 """Request models for multi-task schema extraction endpoints."""
 
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from pydantic import Field
 
@@ -28,7 +28,7 @@ SCHEMA_EXAMPLE = {
 
 class ExtractRequest(ExtractOptions):
     text: str
-    schema: Dict[str, Any] = Field(
+    schema: dict[str, Any] = Field(
         ...,
         description="Multi-task schema: entities, classifications, relations, structures "
         "(fields support dtype, choices, description, threshold, validators)",
@@ -37,7 +37,7 @@ class ExtractRequest(ExtractOptions):
 
 
 class BatchExtractRequest(ExtractOptions, BatchOptions):
-    texts: List[str]
-    schemas: Union[Dict[str, Any], List[Dict[str, Any]]] = Field(
+    texts: list[str]
+    schemas: dict[str, Any] | list[dict[str, Any]] = Field(
         ..., description="One schema for all texts, or one schema per text"
     )

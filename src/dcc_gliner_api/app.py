@@ -10,12 +10,10 @@ Capabilities (https://github.com/fastino-ai/GLiNER2):
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import FastAPI
-
 from gliner2 import GLiNER2, RegexValidator
-
 from ray import serve
 
 from .models import (
@@ -57,11 +55,11 @@ DEFAULT_LABELS = [
 ]
 
 
-def _validators(specs: Optional[List[ValidatorSpec]]) -> List[RegexValidator]:
+def _validators(specs: list[ValidatorSpec] | None) -> list[RegexValidator]:
     return [RegexValidator(**spec) for spec in (specs or [])]
 
 
-def _build_schema(model: GLiNER2, spec: Dict[str, Any]):
+def _build_schema(model: GLiNER2, spec: dict[str, Any]):
     """Build a gliner2 Schema from a plain JSON dict."""
     schema = model.create_schema()
     entities = spec.get("entities")

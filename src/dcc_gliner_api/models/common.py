@@ -1,14 +1,14 @@
 """Shared option models and type aliases used across all request models."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-EntityTypes = Union[List[str], Dict[str, str]]
-RelationTypes = Union[List[str], Dict[str, str]]
-ValidatorSpec = Dict[str, Any]
-FieldSpec = Union[str, Dict[str, Any]]
-TasksSpec = Dict[str, Any]
+EntityTypes = list[str] | dict[str, str]
+RelationTypes = list[str] | dict[str, str]
+ValidatorSpec = dict[str, Any]
+FieldSpec = str | dict[str, Any]
+TasksSpec = dict[str, Any]
 
 
 class ExtractOptions(BaseModel):
@@ -19,7 +19,7 @@ class ExtractOptions(BaseModel):
     include_spans: bool = Field(
         False, description="Attach character spans (start/end) to results"
     )
-    max_len: Optional[int] = Field(
+    max_len: int | None = Field(
         None, description="Max input tokens for the encoder window"
     )
 

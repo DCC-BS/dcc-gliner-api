@@ -1,7 +1,5 @@
 """Request models for entity extraction endpoints."""
 
-from typing import List
-
 from pydantic import Field
 
 from .common import BatchOptions, EntityTypes, ExtractOptions
@@ -15,5 +13,5 @@ class ExtractEntitiesRequest(ExtractOptions):
 
 
 class BatchExtractEntitiesRequest(ExtractOptions, BatchOptions):
-    texts: List[str]
+    texts: list[str]
     entity_types: EntityTypes
