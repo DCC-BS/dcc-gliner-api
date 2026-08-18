@@ -18,4 +18,4 @@ jobs:
             dockerfile: ./Dockerfile
             platforms: linux/amd64
             push: true
-            build_args: GLINER_MODEL=''
+            build_args: PRELOAD_MODEL=false
