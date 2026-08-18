@@ -23,9 +23,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # (re-runs only when the script or the deps change).
 ARG GLINER_MODEL=fastino/gliner2-multi-v1
 RUN --mount=type=bind,source=tools/download_model.py,target=/tmp/download_model.py \
-    HF_HOME=/opt/models \
-    GLINER_MODEL="${GLINER_MODEL}" \
-    /app/.venv/bin/python /tmp/download_model.py
+    if [ -n "${GLINER_MODEL}" ]; then \
+      HF_HOME=/opt/models \
+      GLINER_MODEL="${GLINER_MODEL}" \
+      /app/.venv/bin/python /tmp/download_model.py; \
+    fi
 
 COPY . /app
 

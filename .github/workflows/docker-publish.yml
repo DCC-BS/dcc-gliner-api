@@ -8,7 +8,7 @@ permissions:
 
 jobs:
     publish:
-        uses: DCC-BS/ci-workflows/.github/workflows/publish-docker.yml@v9
+        uses: DCC-BS/ci-workflows/.github/workflows/publish-docker.yml@10a3d20a08ce3a33ec11aa3fa97b16b83983288c # v10
         secrets: inherit
         with:
             project_type: "python" # or "node"
@@ -18,3 +18,4 @@ jobs:
             dockerfile: ./Dockerfile
             platforms: linux/amd64
             push: true
+            build_args: GLINER_MODEL=''
