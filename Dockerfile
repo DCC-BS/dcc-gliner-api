@@ -20,10 +20,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Pre-download the GLiNER2 model into the image so the first request needs no
 # network. Placed before `COPY . /app` and bind-mounting only the script, so
 # this heavy layer is cached independently of application source changes
-# (re-runs only when the script or the deps change).
+# (re-runs only when the script or the deps change). Set PRELOAD_MODEL=false to
+# skip the download.
 ARG GLINER_MODEL=fastino/gliner2-multi-v1
 ARG PRELOAD_MODEL=true
 RUN --mount=type=bind,source=tools/download_model.py,target=/tmp/download_model.py \
+    mkdir -p /opt/models && \
     if [ "${PRELOAD_MODEL}" = "true" ]; then \
       HF_HOME=/opt/models GLINER_MODEL="${GLINER_MODEL}" /app/.venv/bin/python /tmp/download_model.py; \
     fi
