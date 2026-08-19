@@ -20,7 +20,7 @@ class ExtractOptions(BaseModel):
         False, description="Attach character spans (start/end) to results"
     )
     max_len: int | None = Field(
-        None, description="Max input tokens for the encoder window"
+        None, description="Max input tokens for the encoder window",
     )
 
 

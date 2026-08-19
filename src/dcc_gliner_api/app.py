@@ -13,7 +13,8 @@ import os
 from typing import Any
 
 from fastapi import FastAPI
-from gliner2 import GLiNER2, RegexValidator
+from gliner2 import RegexValidator
+from gliner2.inference.engine import GLiNER2
 from ray import serve
 
 from .models import (
@@ -95,7 +96,7 @@ def _build_schema(model: GLiNER2, spec: dict[str, Any]):
 @serve.ingress(app)
 class GLiNER2Deployment:
     def __init__(self):
-        self.model = GLiNER2.from_pretrained(
+        self.model: GLiNER2 = GLiNER2.from_pretrained(
             MODEL_ID,
             quantize=os.environ.get("GLINER_QUANTIZE", "").lower() in ("1", "true"),
             compile=os.environ.get("GLINER_COMPILE", "").lower() in ("1", "true"),
