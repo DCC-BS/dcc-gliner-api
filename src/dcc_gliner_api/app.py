@@ -17,6 +17,14 @@ from gliner2 import RegexValidator
 from gliner2.inference.engine import GLiNER2
 from ray import serve
 
+from .formatting import (
+    classification_tasks_of,
+    relation_names_of,
+    shape_classification_result,
+    shape_entity_result,
+    shape_extraction_result,
+    shape_relation_result,
+)
 from .models import (
     BatchClassifyTextRequest,
     BatchExtractEntitiesRequest,
@@ -104,34 +112,42 @@ class GLiNER2Deployment:
 
     @app.post("/extract_entities", summary="Entity extraction")
     def extract_entities(self, request: ExtractEntitiesRequest):
-        return self.model.extract_entities(
+        raw = self.model.extract_entities(
             request.text,
             request.entity_types,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
+        return shape_entity_result(raw)
 
     @app.post("/extract_relations", summary="Relation extraction")
     def extract_relations(self, request: ExtractRelationsRequest):
-        return self.model.extract_relations(
+        raw = self.model.extract_relations(
             request.text,
             request.relation_types,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
+        return shape_relation_result(raw, relation_names_of(request.relation_types))
 
     @app.post("/classify_text", summary="Text classification (single/multi-label)")
     def classify_text(self, request: ClassifyTextRequest):
-        return self.model.classify_text(
+        raw = self.model.classify_text(
             request.text,
             request.tasks,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             max_len=request.max_len,
+            format_results=False,
+        )
+        return shape_classification_result(
+            raw, list(request.tasks), request.include_confidence
         )
 
     @app.post("/extract_json", summary="Structured data extraction")
@@ -143,23 +159,31 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
 
     @app.post("/extract", summary="Multi-task schema extraction")
     def extract(self, request: ExtractRequest):
         schema = _build_schema(self.model, request.schema)
-        return self.model.extract(
+        raw = self.model.extract(
             request.text,
             schema,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
+        )
+        return shape_extraction_result(
+            raw,
+            request.include_confidence,
+            classification_tasks_of(request.schema),
+            relation_names_of(request.schema.get("relations", [])),
         )
 
     @app.post("/batch_extract_entities", summary="Batch entity extraction")
     def batch_extract_entities(self, request: BatchExtractEntitiesRequest):
-        return self.model.batch_extract_entities(
+        raw = self.model.batch_extract_entities(
             request.texts,
             request.entity_types,
             batch_size=request.batch_size,
@@ -167,11 +191,13 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
+        return [shape_entity_result(r) for r in raw]
 
     @app.post("/batch_extract_relations", summary="Batch relation extraction")
     def batch_extract_relations(self, request: BatchExtractRelationsRequest):
-        return self.model.batch_extract_relations(
+        raw = self.model.batch_extract_relations(
             request.texts,
             request.relation_types,
             batch_size=request.batch_size,
@@ -179,18 +205,27 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
+        names = relation_names_of(request.relation_types)
+        return [shape_relation_result(r, names) for r in raw]
 
     @app.post("/batch_classify_text", summary="Batch text classification")
     def batch_classify_text(self, request: BatchClassifyTextRequest):
-        return self.model.batch_classify_text(
+        raw = self.model.batch_classify_text(
             request.texts,
             request.tasks,
             batch_size=request.batch_size,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             max_len=request.max_len,
+            format_results=False,
         )
+        tasks = list(request.tasks)
+        return [
+            shape_classification_result(r, tasks, request.include_confidence)
+            for r in raw
+        ]
 
     @app.post("/batch_extract_json", summary="Batch structured data extraction")
     def batch_extract_json(self, request: BatchExtractJsonRequest):
@@ -202,16 +237,19 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
 
     @app.post("/batch_extract", summary="Batch multi-task schema extraction")
     def batch_extract(self, request: BatchExtractRequest):
         schemas = request.schemas
         if isinstance(schemas, dict):
+            specs = [schemas] * len(request.texts)
             schemas = _build_schema(self.model, schemas)
         else:
+            specs = schemas
             schemas = [_build_schema(self.model, s) for s in schemas]
-        return self.model.batch_extract(
+        raw = self.model.batch_extract(
             request.texts,
             schemas,
             batch_size=request.batch_size,
@@ -219,7 +257,17 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
             max_len=request.max_len,
+            format_results=False,
         )
+        return [
+            shape_extraction_result(
+                r,
+                request.include_confidence,
+                classification_tasks_of(spec),
+                relation_names_of(spec.get("relations", [])),
+            )
+            for r, spec in zip(raw, specs)
+        ]
 
 
 app = GLiNER2Deployment.bind()  # ty: ignore[unresolved-attribute]  # added by @serve.deployment
