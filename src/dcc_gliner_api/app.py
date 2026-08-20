@@ -80,13 +80,18 @@ class GLiNER2Deployment:
         "/extract_entities", summary="Entity extraction (full-document chunk scan)"
     )
     def extract_entities(self, request: ExtractEntitiesRequest):
-        return self.service.extract_entities(
+        entities = self.service.extract_entities(
             request.text,
             request.entity_types,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
         )
+
+        d = {}
+        d["entities"] = entities
+
+        return d
 
     @app.post("/extract_relations", summary="Relation extraction")
     def extract_relations(self, request: ExtractRelationsRequest):
