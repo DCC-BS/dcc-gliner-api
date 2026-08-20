@@ -2,16 +2,16 @@
 
 from pydantic import Field
 
-from .common import BatchOptions, EntityTypes, ExtractOptions
+from .common import BatchOptions, EntityTypes, ResultOptions
 
 
-class ExtractEntitiesRequest(ExtractOptions):
+class ExtractEntitiesRequest(ResultOptions):
     text: str
     entity_types: EntityTypes = Field(
         ..., description="List of labels, or dict label -> description"
     )
 
 
-class BatchExtractEntitiesRequest(ExtractOptions, BatchOptions):
+class BatchExtractEntitiesRequest(ResultOptions, BatchOptions):
     texts: list[str]
     entity_types: EntityTypes

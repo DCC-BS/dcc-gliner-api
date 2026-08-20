@@ -7,6 +7,7 @@ from .common import (
     ExtractOptions,
     FieldSpec,
     RelationTypes,
+    ResultOptions,
     TasksSpec,
     ValidatorSpec,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ExtractRequest",
     "FieldSpec",
     "RelationTypes",
+    "ResultOptions",
     "TasksSpec",
     "ValidatorSpec",
 ]

@@ -11,7 +11,7 @@ FieldSpec = str | dict[str, Any]
 TasksSpec = dict[str, Any]
 
 
-class ExtractOptions(BaseModel):
+class ResultOptions(BaseModel):
     threshold: float = Field(0.5, ge=0.0, le=1.0, description="Confidence threshold")
     include_confidence: bool = Field(
         False, description="Attach confidence scores to results"
@@ -19,6 +19,9 @@ class ExtractOptions(BaseModel):
     include_spans: bool = Field(
         False, description="Attach character spans (start/end) to results"
     )
+
+
+class ExtractOptions(ResultOptions):
     max_len: int | None = Field(
         None,
         description="Max input tokens for the encoder window",
