@@ -12,6 +12,10 @@ Capabilities (https://github.com/fastino-ai/GLiNER2):
 This layer only translates HTTP requests into service calls and shapes
 responses; all model interaction lives in ``services.gliner_service``.
 """
+from typing import AsyncIterable
+from dcc_gliner_api.models.entities import ExtractEntitiesResponse
+import debugpy
+import os
 
 import json
 
@@ -20,14 +24,14 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from ray import serve
 
-from .formatting import (
+from dcc_gliner_api.formatting import (
     classification_tasks_of,
     relation_names_of,
     shape_classification_result,
     shape_extraction_result,
     shape_relation_result,
 )
-from .models import (
+from dcc_gliner_api.models import (
     BatchClassifyTextRequest,
     BatchExtractEntitiesRequest,
     BatchExtractJsonRequest,
@@ -39,8 +43,8 @@ from .models import (
     ExtractRelationsRequest,
     ExtractRequest,
 )
-from .services.gliner_service import GlinerService
-from .services.tasks import extract_schema
+from dcc_gliner_api.services.gliner_service import GlinerService
+from dcc_gliner_api.services.tasks import extract_schema
 
 app = FastAPI(
     title="GLiNER2 API",
@@ -74,6 +78,11 @@ def _ndjson(results):
 @serve.ingress(app)
 class GLiNER2Deployment:
     def __init__(self):
+        if os.getenv("RAY_DEBUG", "0") == "1":
+            debugpy.listen(("127.0.0.1", 5678))
+            print("Waiting for debugger on 127.0.0.1:5678...")
+            debugpy.wait_for_client()
+
         self.service = GlinerService()
 
     @app.post(
@@ -154,17 +163,17 @@ class GLiNER2Deployment:
         "/batch_extract_entities",
         summary="Batch entity extraction (chunk scan per text, streamed as NDJSON)",
     )
-    def batch_extract_entities(self, request: BatchExtractEntitiesRequest):
+    async def batch_extract_entities(self, request: BatchExtractEntitiesRequest) -> AsyncIterable[ExtractEntitiesResponse]:
         """Stream one JSON line per document as each batch window completes."""
-        results = self.service.iter_batch_extract_entities(
+        for doc_result in self.service.batch_extract_entities(
             request.texts,
             request.entity_types,
             batch_size=request.batch_size,
             threshold=request.threshold,
             include_confidence=request.include_confidence,
             include_spans=request.include_spans,
-        )
-        return StreamingResponse(_ndjson(results), media_type="application/x-ndjson")
+        ):
+            yield doc_result
 
     @app.post("/batch_extract_relations", summary="Batch relation extraction")
     def batch_extract_relations(self, request: BatchExtractRelationsRequest):

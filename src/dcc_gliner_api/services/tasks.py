@@ -14,7 +14,7 @@ from typing import Any
 
 import ray
 
-from .gliner_service import GlinerService
+from dcc_gliner_api.services.gliner_service import GlinerService
 
 
 @lru_cache(maxsize=1)

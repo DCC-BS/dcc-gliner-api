@@ -1,21 +1,23 @@
-"""Pure long-document chunking: split, remap, merge. No model imports.
+"""Pure long-document chunking: split, batch, remap, merge. No model imports.
 
 Splitting is word-aware using processor-compatible token rules so that
 character offsets reported by the model align with this module's offsets.
+Batching groups whole documents into windows of chunks, capped at
+``batch_size``, so callers can make one model call per window.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
+from dcc_gliner_api.models.entities import Entity
 
 CHUNK_SIZE = 384
 CHUNK_OVERLAP = 64
 
-SpanItem = dict[str, Any]
-EntityMap = dict[str, list[SpanItem]]
+EntityMap = dict[str, list[Entity]]
 
 _WORD_PATTERN = re.compile(
     r"""(?:https?://[^\s]+|www\.[^\s]+)
@@ -87,21 +89,46 @@ def split_text_into_chunks(
     return chunks
 
 
+def iter_batch_windows(
+    documents: Iterable[list[TextChunk]],
+    batch_size: int,
+) -> Iterator[list[list[TextChunk]]]:
+    """Group documents' chunk lists into windows of at most ``batch_size`` chunks.
+
+    A document's chunks are never split across windows: a document whose
+    chunks alone exceed ``batch_size`` forms its own (oversized) window.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than 0")
+    window: list[list[TextChunk]] = []
+    chunk_count = 0
+    for chunks in documents:
+        if window and chunk_count + len(chunks) > batch_size:
+            yield window
+            window = []
+            chunk_count = 0
+        window.append(chunks)
+        chunk_count += len(chunks)
+    if window:
+        yield window
+
+
 def remap_spans(entity_map: EntityMap, chunk: TextChunk) -> EntityMap:
     """Shift chunk-local character spans to global document offsets."""
     remapped: EntityMap = {}
     for label, items in entity_map.items():
-        shifted = []
+        shifted: list[Entity] = []
         for item in items:
-            global_item = dict(item)
-            global_item["start"] += chunk.start_char
-            global_item["end"] += chunk.start_char
+            global_item = remap_enity(item, chunk)
             shifted.append(global_item)
         remapped[label] = shifted
     return remapped
 
+def remap_enity(entity: Entity, chunk: TextChunk) -> Entity:
+    return Entity(start=chunk.start_char, end=chunk.end_char, confidence=entity.confidence, text=entity.text)
 
-def merge_detections(per_chunk_maps: list[EntityMap]) -> EntityMap:
+
+def merge_detections(entity_map: EntityMap) -> EntityMap:
     """Merge per-chunk detections into one map.
 
     Per label, same-span overlapping detections collapse to the highest-confidence
@@ -109,24 +136,23 @@ def merge_detections(per_chunk_maps: list[EntityMap]) -> EntityMap:
     Output is in document order.
     """
     labels: list[str] = []
-    for entity_map in per_chunk_maps:
-        for label in entity_map:
-            if label not in labels:
-                labels.append(label)
-    return {label: _merge_label(per_chunk_maps, label) for label in labels}
+    for label in entity_map:
+        if label not in labels:
+            labels.append(label)
+    return {label: _merge_label(entity_map, label) for label in labels}
 
 
-def _merge_label(per_chunk_maps: list[EntityMap], label: str) -> list[SpanItem]:
-    items = [item for m in per_chunk_maps for item in m.get(label, [])]
+def _merge_label(entity_map: EntityMap, label: str) -> list[Entity]:
+    items = entity_map.get(label, [])
     ranked = sorted(
-        items, key=lambda i: (-i.get("confidence", 0.0), i["start"], i["end"])
+        items, key=lambda i: (-i.confidence, i.start, i.end)
     )
-    selected: list[SpanItem] = []
+    selected: list[Entity] = []
     for item in ranked:
         if not any(_spans_overlap(item, chosen) for chosen in selected):
             selected.append(item)
-    return sorted(selected, key=lambda i: (i["start"], i["end"]))
+    return sorted(selected, key=lambda i: (i.start, i.end))
 
 
-def _spans_overlap(a: SpanItem, b: SpanItem) -> bool:
-    return not (a["end"] <= b["start"] or a["start"] >= b["end"])
+def _spans_overlap(a: Entity, b: Entity) -> bool:
+    return not (a.end <= b.start or a.start >= b.end)

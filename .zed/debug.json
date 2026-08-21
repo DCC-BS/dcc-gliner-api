@@ -1,0 +1,13 @@
+[
+  {
+    "label": "Ray Serve attach",
+    "adapter": "Debugpy",
+    "request": "attach",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "connect": {
+      "host": "127.0.0.1",
+      "port": 5678
+    },
+    "justMyCode": false
+  }
+]

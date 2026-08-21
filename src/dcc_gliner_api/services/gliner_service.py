@@ -9,6 +9,8 @@ the upstream dedup formatter never drops repeated mentions (see ``formatting``).
 """
 
 from __future__ import annotations
+from collections import defaultdict
+import debugpy
 
 import os
 from collections.abc import Iterator
@@ -16,14 +18,15 @@ from typing import Any
 
 from gliner2 import RegexValidator
 from gliner2.inference.engine import GLiNER2
+from dcc_gliner_api.models.entities import Entity, ExtractEntitiesResponse
 
-from .chunking import (
+from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     EntityMap,
-    TextChunk,
+    iter_batch_windows,
     merge_detections,
     remap_spans,
-    split_text_into_chunks,
+    split_text_into_chunks, remap_enity,
 )
 
 DEFAULT_MODEL_ID = "fastino/gliner2-multi-v1"
@@ -42,24 +45,24 @@ def _entity_map_of(raw: dict[str, Any]) -> EntityMap:
     return entities[0] if entities else {}
 
 
-def _project(
-    merged: EntityMap, include_confidence: bool, include_spans: bool
-) -> dict[str, Any]:
-    projected: dict[str, Any] = {}
-    for label, items in merged.items():
-        if include_confidence and include_spans:
-            projected[label] = items
-        elif include_spans:
-            projected[label] = [
-                {"text": i["text"], "start": i["start"], "end": i["end"]} for i in items
-            ]
-        elif include_confidence:
-            projected[label] = [
-                {"text": i["text"], "confidence": i["confidence"]} for i in items
-            ]
-        else:
-            projected[label] = [i["text"] for i in items]
-    return projected
+# def _project(
+#     merged: EntityMap, include_confidence: bool, include_spans: bool
+# ) -> dict[str, list[Entity]]:
+#     projected: dict[str, Any] = {}
+#     for label, items in merged.items():
+#         if include_confidence and include_spans:
+#             projected[label] = items
+#         elif include_spans:
+#             projected[label] = [
+#                 {"text": i["text"], "start": i["start"], "end": i["end"]} for i in items
+#             ]
+#         elif include_confidence:
+#             projected[label] = [
+#                 {"text": i["text"], "confidence": i["confidence"]} for i in items
+#             ]
+#         else:
+#             projected[label] = [i["text"] for i in items]
+#     return projected
 
 
 class GlinerService:
@@ -82,7 +85,7 @@ class GlinerService:
         include_spans: bool = False,
     ) -> dict[str, Any]:
         return next(
-            self.iter_batch_extract_entities(
+            self.batch_extract_entities(
                 [text],
                 entity_types,
                 threshold=threshold,
@@ -90,60 +93,6 @@ class GlinerService:
                 include_spans=include_spans,
             )
         )
-
-    def iter_batch_extract_entities(
-        self,
-        texts: list[str],
-        entity_types: Any,
-        *,
-        batch_size: int = 8,
-        threshold: float = 0.5,
-        include_confidence: bool = False,
-        include_spans: bool = False,
-    ) -> Iterator[dict[str, Any]]:
-        """Lazily yield one merged entity result per document, in input order.
-
-        Documents are processed in windows of ``batch_size`` chunks: each
-        window is one model call, and its documents' results are yielded as
-        soon as that window completes — ready for HTTP streaming. The chunk
-        scan (split, remap, merge) runs per document inside the window.
-        """
-        window: list[list[TextChunk]] = []
-        window_chunks: list[str] = []
-
-        def flush() -> Iterator[dict[str, Any]]:
-            raw_chunks = self.model.batch_extract_entities(
-                window_chunks,
-                entity_types,
-                batch_size=batch_size,
-                threshold=threshold,
-                format_results=False,
-                include_confidence=True,
-                include_spans=True,
-                max_len=CHUNK_SIZE,
-            )
-            offset = 0
-            for chunks in window:
-                chunk_results = raw_chunks[offset : offset + len(chunks)]
-                offset += len(chunks)
-                maps = [
-                    remap_spans(_entity_map_of(raw), chunk)
-                    for chunk, raw in zip(chunks, chunk_results)
-                ]
-                yield _project(
-                    merge_detections(maps), include_confidence, include_spans
-                )
-            window.clear()
-            window_chunks.clear()
-
-        for text in texts:
-            chunks = split_text_into_chunks(text)
-            window.append(chunks)
-            window_chunks.extend(chunk.text for chunk in chunks)
-            if len(window_chunks) >= batch_size:
-                yield from flush()
-        if window_chunks:
-            yield from flush()
 
     def batch_extract_entities(
         self,
@@ -154,18 +103,47 @@ class GlinerService:
         threshold: float = 0.5,
         include_confidence: bool = False,
         include_spans: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Eager variant of ``iter_batch_extract_entities``; one result per text."""
-        return list(
-            self.iter_batch_extract_entities(
-                texts,
+    ) -> Iterator[ExtractEntitiesResponse]:
+        """Lazily yield one merged entity result per document, in input order.
+
+        Documents are chunked and grouped into windows of at most
+        ``batch_size`` chunks (see ``chunking.iter_batch_windows``): each
+        window is one model call, and its documents' results are yielded as
+        soon as that window completes — ready for HTTP streaming. The chunk
+        scan (split, remap, merge) runs per document inside the window.
+        """
+        windows = iter_batch_windows(
+            (split_text_into_chunks(text) for text in texts), batch_size
+        )
+
+        # list[{ entities: [ { person: [{text: str, ...}]} ]}]
+
+        for window in windows:
+            raw_chunks: list[dict[str, list[dict[str, Any]]]] = self.model.batch_extract_entities(
+                [chunk.text for chunks in window for chunk in chunks],
                 entity_types,
                 batch_size=batch_size,
                 threshold=threshold,
-                include_confidence=include_confidence,
-                include_spans=include_spans,
+                format_results=False,
+                include_confidence=True,
+                include_spans=True,
+                max_len=CHUNK_SIZE,
             )
-        )
+
+            offset = 0
+            for chunks in window:
+                document_chunks = raw_chunks[offset : offset + len(chunks)]
+                offset += len(chunks)
+
+                entities: dict[str, list[Entity]] = defaultdict(list, [])
+                for chunk, raw in zip(chunks, document_chunks):
+                    for label, entity_list in raw["entities"][0].items():
+                        for entity_map in entity_list:
+                            relative_enity = Entity.model_validate(entity_map)
+                            entities[label].append(remap_enity(relative_enity, chunk))
+
+                yield ExtractEntitiesResponse(entities=merge_detections(entities))
+
 
     def build_schema(self, spec: dict[str, Any]):
         """Build a gliner2 Schema from a plain JSON dict."""

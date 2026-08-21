@@ -63,4 +63,4 @@ ENV RAY_SERVE_DEFAULT_HTTP_HOST=0.0.0.0
 
 EXPOSE 8000
 
-CMD ["ray", "serve", "run", "src.dcc_gliner_api.app:app"]
+CMD ["ray", "serve", "run", "dcc_gliner_api.app:app"]

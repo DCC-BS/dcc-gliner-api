@@ -11,6 +11,7 @@ import pytest
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     TextChunk,
+    iter_batch_windows,
     merge_detections,
     remap_spans,
     split_text_into_chunks,
@@ -33,6 +34,19 @@ def make_document(word_count):
 @pytest.fixture
 def long_document():
     return make_document(1000)
+
+
+def make_doc_chunks(count, tag="d"):
+    return [
+        TextChunk(
+            text=f"{tag}{i}",
+            start_char=i,
+            end_char=i + 1,
+            start_word=i,
+            end_word=i + 1,
+        )
+        for i in range(count)
+    ]
 
 
 class TestSplit:
@@ -84,6 +98,45 @@ class TestSplit:
             split_text_into_chunks("text", chunk_overlap=-1)
         with pytest.raises(ValueError):
             split_text_into_chunks("text", chunk_size=10, chunk_overlap=10)
+
+
+class TestBatchWindows:
+    def test_groups_documents_up_to_batch_size(self):
+        docs = [make_doc_chunks(n, tag=f"d{i}") for i, n in enumerate((2, 2, 2, 3))]
+        windows = list(iter_batch_windows(docs, batch_size=4))
+        totals = [sum(len(chunks) for chunks in window) for window in windows]
+        assert totals == [4, 2, 3]
+
+    def test_documents_stay_intact_and_in_order(self):
+        docs = [make_doc_chunks(n, tag=f"d{i}") for i, n in enumerate((1, 2, 1, 3))]
+        windows = list(iter_batch_windows(docs, batch_size=3))
+        flattened = [chunks for window in windows for chunks in window]
+        assert flattened == docs
+
+    def test_oversized_document_gets_own_window(self):
+        docs = [make_doc_chunks(n, tag=f"d{i}") for i, n in enumerate((3, 10, 2))]
+        windows = list(iter_batch_windows(docs, batch_size=4))
+        totals = [sum(len(chunks) for chunks in window) for window in windows]
+        assert totals == [3, 10, 2]
+        for window, total in zip(windows, totals):
+            if total > 4:
+                assert len(window) == 1
+
+    def test_windows_from_real_split_cover_every_chunk(self, long_document):
+        docs = [
+            split_text_into_chunks(long_document, chunk_size=100, chunk_overlap=20),
+            split_text_into_chunks("short text"),
+        ]
+        windows = list(iter_batch_windows(docs, batch_size=8))
+        flattened = [chunk for window in windows for chunks in window for chunk in chunks]
+        assert flattened == [chunk for chunks in docs for chunk in chunks]
+
+    def test_empty_input_yields_nothing(self):
+        assert list(iter_batch_windows([], batch_size=4)) == []
+
+    def test_invalid_batch_size_raises(self):
+        with pytest.raises(ValueError):
+            list(iter_batch_windows([], batch_size=0))
 
 
 class TestRemap:

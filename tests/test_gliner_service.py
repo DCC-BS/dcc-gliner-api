@@ -59,6 +59,14 @@ def test_windows_respect_batch_size(service):
     assert [len(call) for call in service.model.calls] == [2, 2, 1]
 
 
+def test_model_calls_never_exceed_batch_size(service):
+    text = " ".join(f"w{i}" for i in range(400))  # two chunks per document
+    list(
+        service.iter_batch_extract_entities([text, text], ["probe"], batch_size=3)
+    )
+    assert [len(call) for call in service.model.calls] == [2, 2]
+
+
 def test_document_chunks_never_split_across_model_calls(service):
     text = " ".join(f"w{i}" for i in range(1000))
     list(

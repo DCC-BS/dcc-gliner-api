@@ -1,9 +1,16 @@
 """Request models for entity extraction endpoints."""
+from typing import Dict
+from markdown_it.common.entities import entities
 
-from pydantic import Field
+from pydantic import Field, BaseModel
 
-from .common import BatchOptions, EntityTypes, ResultOptions
+from dcc_gliner_api.models.common import BatchOptions, EntityTypes, ResultOptions
 
+class Entity(BaseModel):
+    text: str
+    start: int
+    end: int
+    confidence: float
 
 class ExtractEntitiesRequest(ResultOptions):
     text: str
@@ -15,3 +22,6 @@ class ExtractEntitiesRequest(ResultOptions):
 class BatchExtractEntitiesRequest(ResultOptions, BatchOptions):
     texts: list[str]
     entity_types: EntityTypes
+
+class ExtractEntitiesResponse(BaseModel):
+    entities: Dict[str, list[Entity]]

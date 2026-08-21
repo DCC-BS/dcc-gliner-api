@@ -16,7 +16,12 @@ run = [
 
 [tasks.dev]
 description = "Start the Ray Serve server"
-run = "uv sync --quiet && .venv/bin/ray serve run src.dcc_gliner_api.app:app"
+run = "uv sync --quiet && .venv/bin/ray serve run dcc_gliner_api.app:app"
+
+[tasks.debug]
+env = { RAY_DEBUG = 1}
+# depends = "dev"
+run = ".venv/bin/ray serve run dcc_gliner_api.app:app"
 
 # ── Docker ──────────────────────────────────────────────────────────────────
 

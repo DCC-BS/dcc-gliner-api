@@ -2,7 +2,7 @@
 
 from pydantic import Field
 
-from .common import BatchOptions, ExtractOptions
+from dcc_gliner_api.models.common import BatchOptions, ExtractOptions
 
 
 class ExtractJsonRequest(ExtractOptions):

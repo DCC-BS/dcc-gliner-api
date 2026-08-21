@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field
 
-from .common import BatchOptions, ExtractOptions
+from dcc_gliner_api.models.common import BatchOptions, ExtractOptions
 
 SCHEMA_EXAMPLE = {
     "entities": {"person": "Names of people", "company": "Organization names"},
