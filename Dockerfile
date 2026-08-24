@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM python:3.13-slim AS build
+FROM nvidia/cuda:13.3.0-runtime-ubuntu24.04 AS build
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /bin/
 
@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # Stage 2: Runtime
-FROM python:3.13-slim
+FROM nvidia/cuda:13.3.0-runtime-ubuntu24.04
 
 ENV TZ=Europe/Zurich
 ENV PYTHONDONTWRITEBYTECODE=1
