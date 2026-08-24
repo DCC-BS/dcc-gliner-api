@@ -9,6 +9,8 @@ the upstream dedup formatter never drops repeated mentions (see ``formatting``).
 """
 
 from __future__ import annotations
+from networkx.algorithms.flow.utils import CurrentEdge
+from dcc_gliner_api.models.common import BatchProgress
 from collections import defaultdict
 import debugpy
 
@@ -18,7 +20,7 @@ from typing import Any
 
 from gliner2 import RegexValidator
 from gliner2.inference.engine import GLiNER2
-from dcc_gliner_api.models.entities import Entity, ExtractEntitiesResponse
+from dcc_gliner_api.models.entities import Entity, ExtractEntitiesResponse, ExtractEntitiesBatchResponse
 
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
@@ -45,26 +47,6 @@ def _entity_map_of(raw: dict[str, Any]) -> EntityMap:
     return entities[0] if entities else {}
 
 
-# def _project(
-#     merged: EntityMap, include_confidence: bool, include_spans: bool
-# ) -> dict[str, list[Entity]]:
-#     projected: dict[str, Any] = {}
-#     for label, items in merged.items():
-#         if include_confidence and include_spans:
-#             projected[label] = items
-#         elif include_spans:
-#             projected[label] = [
-#                 {"text": i["text"], "start": i["start"], "end": i["end"]} for i in items
-#             ]
-#         elif include_confidence:
-#             projected[label] = [
-#                 {"text": i["text"], "confidence": i["confidence"]} for i in items
-#             ]
-#         else:
-#             projected[label] = [i["text"] for i in items]
-#     return projected
-
-
 class GlinerService:
     """Owns the GLiNER2 model lifecycle; the only code that touches the model."""
 
@@ -81,16 +63,12 @@ class GlinerService:
         entity_types: Any,
         *,
         threshold: float = 0.5,
-        include_confidence: bool = False,
-        include_spans: bool = False,
-    ) -> dict[str, Any]:
+    ) -> ExtractEntitiesResponse:
         return next(
             self.batch_extract_entities(
                 [text],
                 entity_types,
                 threshold=threshold,
-                include_confidence=include_confidence,
-                include_spans=include_spans,
             )
         )
 
@@ -101,9 +79,7 @@ class GlinerService:
         *,
         batch_size: int = 8,
         threshold: float = 0.5,
-        include_confidence: bool = False,
-        include_spans: bool = False,
-    ) -> Iterator[ExtractEntitiesResponse]:
+    ) -> Iterator[ExtractEntitiesBatchResponse]:
         """Lazily yield one merged entity result per document, in input order.
 
         Documents are chunked and grouped into windows of at most
@@ -116,9 +92,9 @@ class GlinerService:
             (split_text_into_chunks(text) for text in texts), batch_size
         )
 
-        # list[{ entities: [ { person: [{text: str, ...}]} ]}]
-
-        for window in windows:
+        current_doc_index = 1
+        for i, window in enumerate(windows):
+            # raw chunks returns: [{ entities: [ { person: [{text: str, ...}]} ]}]
             raw_chunks: list[dict[str, list[dict[str, Any]]]] = self.model.batch_extract_entities(
                 [chunk.text for chunks in window for chunk in chunks],
                 entity_types,
@@ -142,7 +118,9 @@ class GlinerService:
                             relative_enity = Entity.model_validate(entity_map)
                             entities[label].append(remap_enity(relative_enity, chunk))
 
-                yield ExtractEntitiesResponse(entities=merge_detections(entities))
+                progress = BatchProgress.new(current_doc_index, length=len(texts))
+                current_doc_index += 1
+                yield ExtractEntitiesBatchResponse(entities=merge_detections(entities), progress=progress)
 
 
     def build_schema(self, spec: dict[str, Any]):

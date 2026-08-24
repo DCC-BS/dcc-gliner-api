@@ -30,3 +30,12 @@ class ExtractOptions(ResultOptions):
 
 class BatchOptions(BaseModel):
     batch_size: int = Field(8, ge=1, description="Batch size for batched inference")
+
+class BatchProgress(BaseModel):
+    current: int
+    length: int
+    progress: float
+
+    @staticmethod
+    def new(current: int, length: int) -> "BatchProgress":
+        return BatchProgress(current=current, length=length, progress=current / length)

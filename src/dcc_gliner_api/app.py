@@ -13,7 +13,7 @@ This layer only translates HTTP requests into service calls and shapes
 responses; all model interaction lives in ``services.gliner_service``.
 """
 from typing import AsyncIterable
-from dcc_gliner_api.models.entities import ExtractEntitiesResponse
+from dcc_gliner_api.models.entities import ExtractEntitiesResponse, ExtractEntitiesBatchResponse
 import debugpy
 import os
 
@@ -93,8 +93,6 @@ class GLiNER2Deployment:
             request.text,
             request.entity_types,
             threshold=request.threshold,
-            include_confidence=request.include_confidence,
-            include_spans=request.include_spans,
         )
 
         d = {}
@@ -163,15 +161,13 @@ class GLiNER2Deployment:
         "/batch_extract_entities",
         summary="Batch entity extraction (chunk scan per text, streamed as NDJSON)",
     )
-    async def batch_extract_entities(self, request: BatchExtractEntitiesRequest) -> AsyncIterable[ExtractEntitiesResponse]:
+    async def batch_extract_entities(self, request: BatchExtractEntitiesRequest) -> AsyncIterable[ExtractEntitiesBatchResponse]:
         """Stream one JSON line per document as each batch window completes."""
         for doc_result in self.service.batch_extract_entities(
             request.texts,
             request.entity_types,
             batch_size=request.batch_size,
             threshold=request.threshold,
-            include_confidence=request.include_confidence,
-            include_spans=request.include_spans,
         ):
             yield doc_result
 

@@ -40,10 +40,14 @@ run = "docker compose logs -f"
 
 # ── Quality ─────────────────────────────────────────────────────────────────
 
-[tasks.test]
+[tasks."test:unit"]
 description = "Run unit tests"
 alias = "t"
 run = "uv run pytest"
+
+[tasks."test:integration"]
+description = "Run integration tests against a running server"
+run = "uv run pytest tests/test_batch_extract_entities_api.py -m integration -s"
 
 [tasks.check]
 description = "Verify lockfile, format code, lint, and type-check"

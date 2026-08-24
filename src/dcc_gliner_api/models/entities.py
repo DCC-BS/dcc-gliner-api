@@ -4,7 +4,7 @@ from markdown_it.common.entities import entities
 
 from pydantic import Field, BaseModel
 
-from dcc_gliner_api.models.common import BatchOptions, EntityTypes, ResultOptions
+from dcc_gliner_api.models.common import BatchOptions, EntityTypes, ResultOptions, BatchProgress
 
 class Entity(BaseModel):
     text: str
@@ -25,3 +25,6 @@ class BatchExtractEntitiesRequest(ResultOptions, BatchOptions):
 
 class ExtractEntitiesResponse(BaseModel):
     entities: Dict[str, list[Entity]]
+
+class ExtractEntitiesBatchResponse(ExtractEntitiesResponse):
+    progress: BatchProgress

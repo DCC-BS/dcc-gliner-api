@@ -28,6 +28,10 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: test that requires a running server (run with -m integration)",
+]
 
 
 [tool.ruff]

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+
 from dcc_gliner_api.models.entities import Entity
 
 CHUNK_SIZE = 384
@@ -125,7 +125,12 @@ def remap_spans(entity_map: EntityMap, chunk: TextChunk) -> EntityMap:
     return remapped
 
 def remap_enity(entity: Entity, chunk: TextChunk) -> Entity:
-    return Entity(start=chunk.start_char, end=chunk.end_char, confidence=entity.confidence, text=entity.text)
+    return Entity(
+        start=chunk.start_char + entity.start,
+        end=chunk.start_char + entity.end,
+        confidence=entity.confidence,
+        text=entity.text,
+    )
 
 
 def merge_detections(entity_map: EntityMap) -> EntityMap:
