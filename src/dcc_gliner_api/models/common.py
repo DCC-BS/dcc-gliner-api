@@ -1,14 +1,9 @@
 """Shared option models and type aliases used across all request models."""
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 EntityTypes = list[str] | dict[str, str]
 RelationTypes = list[str] | dict[str, str]
-ValidatorSpec = dict[str, Any]
-FieldSpec = str | dict[str, Any]
-TasksSpec = dict[str, Any]
 
 
 class ResultOptions(BaseModel):
