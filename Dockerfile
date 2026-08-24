@@ -44,14 +44,19 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# venv is built against the system Python from python:3.13-slim, so the runtime
-# stage gets it via COPY of /app.
-COPY --from=build /app /app
+# Replace the default ubuntu user (member of sudo group) with a locked-down app user
+RUN userdel -r ubuntu && \
+    groupadd --gid 1000 app && \
+    useradd --uid 1000 --gid app --create-home --shell /usr/sbin/nologin app
+
+# uv-managed Python interpreter; the venv's python symlinks resolve here
+COPY --from=build /opt/uv/python /opt/uv/python
+COPY --from=build --chown=app:app /app /app
 
 # Baked model cache. Copied to the runtime HF cache location so the model is
 # found with no env var. When compose mounts the (empty) hf-cache named volume
 # over this path, Docker seeds the volume from these contents on first start.
-COPY --from=build /opt/models /app/.cache/huggingface
+COPY --from=build --chown=app:app /opt/models /app/.cache/huggingface
 
 ENV PATH="/app/.venv/bin:$PATH"
 
@@ -60,6 +65,8 @@ ENV HF_HOME=/app/.cache/huggingface
 
 # Ray Serve's HTTP proxy must listen on all interfaces for Docker port mapping
 ENV RAY_SERVE_DEFAULT_HTTP_HOST=0.0.0.0
+
+USER app
 
 EXPOSE 8000
 
