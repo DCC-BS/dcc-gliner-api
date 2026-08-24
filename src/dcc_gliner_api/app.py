@@ -53,21 +53,6 @@ app = FastAPI(
     version="0.5.0",
 )
 
-DEFAULT_LABELS = [
-    "person",
-    "organisation",
-    "adresse",
-    "geburtsdatum",
-    "datum",
-    "ahv-nummer",
-    "aktenzeichen",
-    "telefonnummer",
-    "e-mail-adresse",
-    "iban",
-    "geldbetrag",
-]
-
-
 def _ndjson(results):
     for result in results:
         yield json.dumps(result, ensure_ascii=False) + "\n"
