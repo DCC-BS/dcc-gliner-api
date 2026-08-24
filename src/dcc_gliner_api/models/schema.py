@@ -8,9 +8,7 @@ from dcc_gliner_api.models.common import BatchOptions, ExtractOptions
 
 SCHEMA_EXAMPLE = {
     "entities": {"person": "Names of people", "company": "Organization names"},
-    "classifications": [
-        {"task": "sentiment", "labels": ["positive", "negative", "neutral"]}
-    ],
+    "classifications": [{"task": "sentiment", "labels": ["positive", "negative", "neutral"]}],
     "relations": ["works_for", "located_in"],
     "structures": {
         "product_info": {

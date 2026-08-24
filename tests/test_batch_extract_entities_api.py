@@ -117,5 +117,4 @@ def test_batch_streams_results_incrementally(texts):
         assert set(doc["entities"]) == {"person", "location"}
         assert doc["entities"]["person"][0]["start"] == person_pos
         assert doc["entities"]["location"][0]["start"] == location_pos
-        print(f"[{time.monotonic() - started:5.2f}s] person="
-              f"{doc['entities']['person'][0]['text']}")
+        print(f"[{time.monotonic() - started:5.2f}s] person={doc['entities']['person'][0]['text']}")

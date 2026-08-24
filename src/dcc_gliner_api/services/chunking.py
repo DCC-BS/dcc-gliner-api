@@ -61,11 +61,7 @@ def split_text_into_chunks(
 
     tokens = list(iter_word_offsets(text))
     if not tokens:
-        return [
-            TextChunk(
-                text=text, start_char=0, end_char=len(text), start_word=0, end_word=0
-            )
-        ]
+        return [TextChunk(text=text, start_char=0, end_char=len(text), start_word=0, end_word=0)]
 
     chunks: list[TextChunk] = []
     step = chunk_size - chunk_overlap
@@ -124,6 +120,7 @@ def remap_spans(entity_map: EntityMap, chunk: TextChunk) -> EntityMap:
         remapped[label] = shifted
     return remapped
 
+
 def remap_enity(entity: Entity, chunk: TextChunk) -> Entity:
     return Entity(
         start=chunk.start_char + entity.start,
@@ -149,9 +146,7 @@ def merge_detections(entity_map: EntityMap) -> EntityMap:
 
 def _merge_label(entity_map: EntityMap, label: str) -> list[Entity]:
     items = entity_map.get(label, [])
-    ranked = sorted(
-        items, key=lambda i: (-i.confidence, i.start, i.end)
-    )
+    ranked = sorted(items, key=lambda i: (-i.confidence, i.start, i.end))
     selected: list[Entity] = []
     for item in ranked:
         if not any(_spans_overlap(item, chosen) for chosen in selected):

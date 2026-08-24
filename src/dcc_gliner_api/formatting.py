@@ -29,32 +29,18 @@ def shape_entity_result(raw: RawResult) -> dict[str, Any]:
     entities = raw.get("entities") or []
     if not entities:
         return {}
-    return {
-        name: (value if isinstance(value, (list, dict)) or value else None)
-        for name, value in entities[0].items()
-    }
+    return {name: (value if isinstance(value, (list, dict)) or value else None) for name, value in entities[0].items()}
 
 
-def _shape_classification(
-    value: LabelConf | list[LabelConf], include_confidence: bool
-) -> Any:
+def _shape_classification(value: LabelConf | list[LabelConf], include_confidence: bool) -> Any:
     if isinstance(value, list):
-        return [
-            {"label": label, "confidence": conf} if include_confidence else label
-            for label, conf in value
-        ]
+        return [{"label": label, "confidence": conf} if include_confidence else label for label, conf in value]
     label, conf = value
     return {"label": label, "confidence": conf} if include_confidence else label
 
 
-def shape_classification_result(
-    raw: RawResult, task_names: list[str], include_confidence: bool
-) -> dict[str, Any]:
-    return {
-        task: _shape_classification(raw[task], include_confidence)
-        for task in task_names
-        if task in raw
-    }
+def shape_classification_result(raw: RawResult, task_names: list[str], include_confidence: bool) -> dict[str, Any]:
+    return {task: _shape_classification(raw[task], include_confidence) for task in task_names if task in raw}
 
 
 def _shape_relation_instances(instances: list[Any]) -> list[Any]:
@@ -62,9 +48,7 @@ def _shape_relation_instances(instances: list[Any]) -> list[Any]:
 
 
 def shape_relation_result(raw: RawResult, relation_names: list[str]) -> dict[str, Any]:
-    extraction = {
-        name: _shape_relation_instances(raw.get(name, [])) for name in relation_names
-    }
+    extraction = {name: _shape_relation_instances(raw.get(name, [])) for name in relation_names}
     return {"relation_extraction": extraction} if extraction else {}
 
 

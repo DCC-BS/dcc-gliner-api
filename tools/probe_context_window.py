@@ -56,10 +56,7 @@ def build_text(target: int, tokenizer, splitter) -> tuple[str, int, int]:
     total = 0
     i = 0
     while True:
-        if i % (PROBE_EVERY + 1) == PROBE_EVERY:
-            sent = PROBE_SENTENCE
-        else:
-            sent = FILLER[i % len(FILLER)]
+        sent = PROBE_SENTENCE if i % (PROBE_EVERY + 1) == PROBE_EVERY else FILLER[i % len(FILLER)]
         c = count_tokens(sent, tokenizer, splitter)
         if total + c + probe_len > target:
             break
@@ -96,7 +93,7 @@ def check(model, tokenizer, splitter, target: int) -> dict:
             max_len=2048,
             format_results=False,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         status = f"RAISED ({type(exc).__name__})"
     seconds = time.perf_counter() - t0
 
@@ -117,9 +114,7 @@ def check(model, tokenizer, splitter, target: int) -> dict:
                         break
             tail_start = text.rfind(PROBE_NAME)
             tail_end = tail_start + len(PROBE_NAME)
-            tail_found = any(
-                m["start"] < tail_end and m["end"] > tail_start for m in entities
-            )
+            tail_found = any(m["start"] < tail_end and m["end"] > tail_start for m in entities)
     return {
         "target": target,
         "tokens": tokens,
@@ -157,12 +152,8 @@ def run(model, tokenizer, splitter, ladder: list[int], precision: int) -> list[d
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--model", default=os.environ.get("GLINER_MODEL", "fastino/gliner2-base-v1")
-    )
-    parser.add_argument(
-        "--device", default="cuda" if torch.cuda.is_available() else "cpu"
-    )
+    parser.add_argument("--model", default=os.environ.get("GLINER_MODEL", "fastino/gliner2-base-v1"))
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--precision", type=int, default=16)
     parser.add_argument("--ladder", default=",".join(map(str, DEFAULT_LADDER)))
     args = parser.parse_args()
@@ -175,10 +166,7 @@ def main() -> None:
 
     rows = run(model, tokenizer, splitter, ladder, args.precision)
 
-    print(
-        f"\n{'target':>7} {'tokens':>7} {'words':>6} {'chars':>7} "
-        f"{'probes':>7} {'tail':>5} {'secs':>6}  status"
-    )
+    print(f"\n{'target':>7} {'tokens':>7} {'words':>6} {'chars':>7} {'probes':>7} {'tail':>5} {'secs':>6}  status")
     for r in rows:
         print(
             f"{r['target']:>7} {r['tokens']:>7} {r['words']:>6} {r['chars']:>7} "
@@ -189,8 +177,7 @@ def main() -> None:
     if working:
         best = max(working, key=lambda r: r["tokens"])
         print(
-            f"\nmax working length: {best['tokens']} text subword tokens "
-            f"({best['words']} words, {best['chars']} chars)"
+            f"\nmax working length: {best['tokens']} text subword tokens ({best['words']} words, {best['chars']} chars)"
         )
         broken = [r for r in rows if not r["tail"] and r["target"] > best["target"]]
         if broken:

@@ -9,26 +9,24 @@ the upstream dedup formatter never drops repeated mentions (see ``formatting``).
 """
 
 from __future__ import annotations
-from networkx.algorithms.flow.utils import CurrentEdge
-from dcc_gliner_api.models.common import BatchProgress
-from collections import defaultdict
-import debugpy
 
 import os
+from collections import defaultdict
 from collections.abc import Iterator
 from typing import Any
 
 from gliner2 import RegexValidator
 from gliner2.inference.engine import GLiNER2
-from dcc_gliner_api.models.entities import Entity, ExtractEntitiesResponse, ExtractEntitiesBatchResponse
 
+from dcc_gliner_api.models.common import BatchProgress
+from dcc_gliner_api.models.entities import Entity, ExtractEntitiesBatchResponse, ExtractEntitiesResponse
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     EntityMap,
     iter_batch_windows,
     merge_detections,
-    remap_spans,
-    split_text_into_chunks, remap_enity,
+    remap_enity,
+    split_text_into_chunks,
 )
 
 DEFAULT_MODEL_ID = "fastino/gliner2-multi-v1"
@@ -88,12 +86,10 @@ class GlinerService:
         soon as that window completes — ready for HTTP streaming. The chunk
         scan (split, remap, merge) runs per document inside the window.
         """
-        windows = iter_batch_windows(
-            (split_text_into_chunks(text) for text in texts), batch_size
-        )
+        windows = iter_batch_windows((split_text_into_chunks(text) for text in texts), batch_size)
 
         current_doc_index = 1
-        for i, window in enumerate(windows):
+        for window in windows:
             # raw chunks returns: [{ entities: [ { person: [{text: str, ...}]} ]}]
             raw_chunks: list[dict[str, list[dict[str, Any]]]] = self.model.batch_extract_entities(
                 [chunk.text for chunks in window for chunk in chunks],
@@ -112,7 +108,7 @@ class GlinerService:
                 offset += len(chunks)
 
                 entities: dict[str, list[Entity]] = defaultdict(list, [])
-                for chunk, raw in zip(chunks, document_chunks):
+                for chunk, raw in zip(chunks, document_chunks, strict=True):
                     for label, entity_list in raw["entities"][0].items():
                         for entity_map in entity_list:
                             relative_enity = Entity.model_validate(entity_map)
@@ -121,7 +117,6 @@ class GlinerService:
                 progress = BatchProgress.new(current_doc_index, length=len(texts))
                 current_doc_index += 1
                 yield ExtractEntitiesBatchResponse(entities=merge_detections(entities), progress=progress)
-
 
     def build_schema(self, spec: dict[str, Any]):
         """Build a gliner2 Schema from a plain JSON dict."""

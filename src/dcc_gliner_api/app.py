@@ -12,12 +12,10 @@ Capabilities (https://github.com/fastino-ai/GLiNER2):
 This layer only translates HTTP requests into service calls and shapes
 responses; all model interaction lives in ``services.gliner_service``.
 """
-from typing import AsyncIterable
-from dcc_gliner_api.models.entities import ExtractEntitiesResponse, ExtractEntitiesBatchResponse
-import debugpy
-import os
 
 import json
+import os
+from collections.abc import AsyncIterable
 
 import ray
 from fastapi import FastAPI
@@ -43,6 +41,7 @@ from dcc_gliner_api.models import (
     ExtractRelationsRequest,
     ExtractRequest,
 )
+from dcc_gliner_api.models.entities import ExtractEntitiesBatchResponse
 from dcc_gliner_api.services.gliner_service import GlinerService
 from dcc_gliner_api.services.tasks import extract_schema
 
@@ -79,15 +78,15 @@ def _ndjson(results):
 class GLiNER2Deployment:
     def __init__(self):
         if os.getenv("RAY_DEBUG", "0") == "1":
-            debugpy.listen(("127.0.0.1", 5678))
+            import debugpy  # noqa: T100
+
+            debugpy.listen(("127.0.0.1", 5678))  # noqa: T100
             print("Waiting for debugger on 127.0.0.1:5678...")
-            debugpy.wait_for_client()
+            debugpy.wait_for_client()  # noqa: T100
 
         self.service = GlinerService()
 
-    @app.post(
-        "/extract_entities", summary="Entity extraction (full-document chunk scan)"
-    )
+    @app.post("/extract_entities", summary="Entity extraction (full-document chunk scan)")
     def extract_entities(self, request: ExtractEntitiesRequest):
         entities = self.service.extract_entities(
             request.text,
@@ -121,9 +120,7 @@ class GLiNER2Deployment:
             include_confidence=request.include_confidence,
             max_len=request.max_len,
         )
-        return shape_classification_result(
-            raw, list(request.tasks), request.include_confidence
-        )
+        return shape_classification_result(raw, list(request.tasks), request.include_confidence)
 
     @app.post("/extract_json", summary="Structured data extraction")
     def extract_json(self, request: ExtractJsonRequest):
@@ -161,7 +158,9 @@ class GLiNER2Deployment:
         "/batch_extract_entities",
         summary="Batch entity extraction (chunk scan per text, streamed as NDJSON)",
     )
-    async def batch_extract_entities(self, request: BatchExtractEntitiesRequest) -> AsyncIterable[ExtractEntitiesBatchResponse]:
+    async def batch_extract_entities(
+        self, request: BatchExtractEntitiesRequest
+    ) -> AsyncIterable[ExtractEntitiesBatchResponse]:
         """Stream one JSON line per document as each batch window completes."""
         for doc_result in self.service.batch_extract_entities(
             request.texts,
@@ -196,10 +195,7 @@ class GLiNER2Deployment:
             max_len=request.max_len,
         )
         tasks = list(request.tasks)
-        return [
-            shape_classification_result(r, tasks, request.include_confidence)
-            for r in raw
-        ]
+        return [shape_classification_result(r, tasks, request.include_confidence) for r in raw]
 
     @app.post("/batch_extract_json", summary="Batch structured data extraction")
     def batch_extract_json(self, request: BatchExtractJsonRequest):
@@ -215,30 +211,21 @@ class GLiNER2Deployment:
 
     @app.post(
         "/batch_extract",
-        summary=(
-            "Batch multi-task schema extraction "
-            "(one Ray task per document, streamed as NDJSON)"
-        ),
+        summary=("Batch multi-task schema extraction (one Ray task per document, streamed as NDJSON)"),
     )
     def batch_extract(self, request: BatchExtractRequest):
         """Run one Ray task per document concurrently; stream results in order."""
-        if isinstance(request.schemas, dict):
-            specs = [request.schemas] * len(request.texts)
-        else:
-            specs = request.schemas
+        specs = [request.schemas] * len(request.texts) if isinstance(request.schemas, dict) else request.schemas
         options = {
             "threshold": request.threshold,
             "include_confidence": request.include_confidence,
             "include_spans": request.include_spans,
             "max_len": request.max_len,
         }
-        refs = [
-            extract_schema.remote(text, spec, options)
-            for text, spec in zip(request.texts, specs)
-        ]
+        refs = [extract_schema.remote(text, spec, options) for text, spec in zip(request.texts, specs, strict=True)]
 
         def results():
-            for ref, spec in zip(refs, specs):
+            for ref, spec in zip(refs, specs, strict=True):
                 raw = ray.get(ref)
                 yield shape_extraction_result(
                     raw,

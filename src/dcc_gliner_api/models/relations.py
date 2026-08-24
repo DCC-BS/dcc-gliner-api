@@ -7,9 +7,7 @@ from dcc_gliner_api.models.common import BatchOptions, ExtractOptions, RelationT
 
 class ExtractRelationsRequest(ExtractOptions):
     text: str
-    relation_types: RelationTypes = Field(
-        ..., description="List of relations, or dict relation -> description"
-    )
+    relation_types: RelationTypes = Field(..., description="List of relations, or dict relation -> description")
 
 
 class BatchExtractRelationsRequest(ExtractOptions, BatchOptions):

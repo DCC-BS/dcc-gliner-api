@@ -13,12 +13,8 @@ TasksSpec = dict[str, Any]
 
 class ResultOptions(BaseModel):
     threshold: float = Field(0.5, ge=0.0, le=1.0, description="Confidence threshold")
-    include_confidence: bool = Field(
-        False, description="Attach confidence scores to results"
-    )
-    include_spans: bool = Field(
-        False, description="Attach character spans (start/end) to results"
-    )
+    include_confidence: bool = Field(False, description="Attach confidence scores to results")
+    include_spans: bool = Field(False, description="Attach character spans (start/end) to results")
 
 
 class ExtractOptions(ResultOptions):
@@ -30,6 +26,7 @@ class ExtractOptions(ResultOptions):
 
 class BatchOptions(BaseModel):
     batch_size: int = Field(8, ge=1, description="Batch size for batched inference")
+
 
 class BatchProgress(BaseModel):
     current: int

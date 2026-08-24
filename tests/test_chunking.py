@@ -8,6 +8,7 @@ from itertools import pairwise
 
 import pytest
 
+from dcc_gliner_api.models.entities import Entity
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     TextChunk,
@@ -19,7 +20,7 @@ from dcc_gliner_api.services.chunking import (
 
 
 def mention(text, confidence, start, end):
-    return {"text": text, "confidence": confidence, "start": start, "end": end}
+    return Entity(text=text, confidence=confidence, start=start, end=end)
 
 
 def find_word(chunk_text, needle):
@@ -87,9 +88,7 @@ class TestSplit:
 
     def test_empty_text_is_one_chunk(self):
         chunks = split_text_into_chunks("")
-        assert chunks == [
-            TextChunk(text="", start_char=0, end_char=0, start_word=0, end_word=0)
-        ]
+        assert chunks == [TextChunk(text="", start_char=0, end_char=0, start_word=0, end_word=0)]
 
     def test_invalid_params_raise(self):
         with pytest.raises(ValueError):
@@ -118,7 +117,7 @@ class TestBatchWindows:
         windows = list(iter_batch_windows(docs, batch_size=4))
         totals = [sum(len(chunks) for chunks in window) for window in windows]
         assert totals == [3, 10, 2]
-        for window, total in zip(windows, totals):
+        for window, total in zip(windows, totals, strict=True):
             if total > 4:
                 assert len(window) == 1
 
@@ -148,7 +147,7 @@ class TestRemap:
         assert local >= 0
         entity_map = {"probe": [mention("w25", 0.9, local, local + len("w25"))]}
         global_map = remap_spans(entity_map, chunk)
-        start, end = global_map["probe"][0]["start"], global_map["probe"][0]["end"]
+        start, end = global_map["probe"][0].start, global_map["probe"][0].end
         assert document[start:end] == "w25"
 
     def test_empty_map_passes_through(self):
@@ -160,88 +159,81 @@ class TestMerge:
     def test_overlap_artifact_collapses_to_higher_confidence(self):
         low = mention("Tim Cook", 0.70, 100, 108)
         high = mention("Tim Cook", 0.95, 101, 109)
-        merged = merge_detections([{"person": [low]}, {"person": [high]}])
+        merged = merge_detections({"person": [low, high]})
         assert merged["person"] == [high]
 
     def test_distinct_mentions_survive(self):
         first = mention("Apple", 0.9, 10, 15)
         second = mention("Apple", 0.8, 500, 505)
-        merged = merge_detections([{"company": [first, second]}])
+        merged = merge_detections({"company": [first, second]})
         assert merged["company"] == [first, second]
 
     def test_overlap_collapses_to_higher_confidence_regardless_of_length(self):
         fragment = mention("Cook", 0.99, 104, 108)
         full = mention("Tim Cook", 0.80, 100, 108)
-        assert merge_detections([{"person": [fragment]}, {"person": [full]}])[
-            "person"
-        ] == [fragment]
-        assert merge_detections([{"person": [full]}, {"person": [fragment]}])[
-            "person"
-        ] == [fragment]
+        assert merge_detections({"person": [fragment, full]})["person"] == [fragment]
+        assert merge_detections({"person": [full, fragment]})["person"] == [fragment]
         weaker_fragment = mention("Cook", 0.70, 104, 108)
-        assert merge_detections([{"person": [weaker_fragment]}, {"person": [full]}])[
-            "person"
-        ] == [full]
+        assert merge_detections({"person": [weaker_fragment, full]})["person"] == [full]
 
     def test_identical_span_keeps_best_confidence(self):
         a = mention("Apple", 0.8, 10, 15)
         b = mention("Apple", 0.95, 10, 15)
-        merged = merge_detections([{"company": [a]}, {"company": [b]}])
+        merged = merge_detections({"company": [a, b]})
         assert merged["company"] == [b]
 
     def test_output_in_document_order(self):
         late = mention("zeta", 0.99, 900, 904)
         early = mention("alpha", 0.51, 100, 105)
         mid = mention("beta", 0.7, 500, 504)
-        merged = merge_detections([{"label": [late]}, {"label": [early, mid]}])
+        merged = merge_detections({"label": [late, early, mid]})
         assert merged["label"] == [early, mid, late]
 
     def test_labels_merge_independently(self):
         person = mention("Cook", 0.9, 100, 104)
         role = mention("Cook", 0.8, 100, 104)
-        merged = merge_detections([{"person": [person], "role": [role]}])
+        merged = merge_detections({"person": [person], "role": [role]})
         assert merged["person"] == [person]
         assert merged["role"] == [role]
 
     def test_empty_inputs(self):
-        assert merge_detections([]) == {}
-        assert merge_detections([{}]) == {}
+        assert merge_detections({}) == {}
 
 
 class TestPipelineInvariant:
     def test_mention_found_in_every_chunk_maps_to_document(self):
         document = " ".join(f"w{i}" for i in range(800))
         chunks = split_text_into_chunks(document, chunk_size=64, chunk_overlap=16)
-        per_chunk = []
+        combined: dict[str, list[Entity]] = {}
         for chunk in chunks:
             local = find_word(chunk.text, "w50")
             if local >= 0:
-                per_chunk.append(
-                    {"probe": [mention("w50", 0.9, local, local + len("w50"))]}
+                remapped = remap_spans(
+                    {"probe": [mention("w50", 0.9, local, local + len("w50"))]},
+                    chunk,
                 )
-        assert len(per_chunk) > 1
-        merged = merge_detections(
-            [remap_spans(m, c) for m, c in zip(per_chunk, chunks)]
-        )
+                combined.setdefault("probe", []).extend(remapped["probe"])
+        assert len(combined["probe"]) > 1
+        merged = merge_detections(combined)
         assert len(merged["probe"]) == 1
         item = merged["probe"][0]
-        assert document[item["start"] : item["end"]] == "w50"
+        assert document[item.start : item.end] == "w50"
 
     def test_repeated_mentions_at_distinct_positions_survive(self):
         document = " ".join(f"w{i}" for i in range(400))
         chunks = split_text_into_chunks(document, chunk_size=50, chunk_overlap=10)
-        per_chunk = []
+        combined: dict[str, list[Entity]] = {}
         for chunk in chunks:
             entity_map = {}
             for needle in ("w5", "w300"):
                 local = find_word(chunk.text, needle)
                 if local >= 0:
-                    entity_map.setdefault("probe", []).append(
-                        mention(needle, 0.9, local, local + len(needle))
-                    )
-            per_chunk.append(remap_spans(entity_map, chunk))
-        merged = merge_detections(per_chunk)
-        texts = [item["text"] for item in merged["probe"]]
+                    entity_map.setdefault("probe", []).append(mention(needle, 0.9, local, local + len(needle)))
+            remapped = remap_spans(entity_map, chunk)
+            if "probe" in remapped:
+                combined.setdefault("probe", []).extend(remapped["probe"])
+        merged = merge_detections(combined)
+        texts = [item.text for item in merged["probe"]]
         assert texts == ["w5", "w300"]
         for item in merged["probe"]:
-            assert document[item["start"] : item["end"]] == item["text"]
+            assert document[item.start : item.end] == item.text
