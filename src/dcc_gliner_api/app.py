@@ -56,16 +56,11 @@ class GLiNER2Deployment:
 
     @app.post("/extract_entities", summary="Entity extraction (full-document chunk scan)")
     def extract_entities(self, request: ExtractEntitiesRequest):
-        entities = self.service.extract_entities(
+        return self.service.extract_entities(
             request.text,
             request.entity_types,
             threshold=request.threshold,
         )
-
-        d = {}
-        d["entities"] = entities
-
-        return d
 
     @app.post(
         "/batch_extract_entities",
