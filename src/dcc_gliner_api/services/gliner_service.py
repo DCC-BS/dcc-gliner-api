@@ -10,11 +10,13 @@ the upstream dedup formatter never drops repeated mentions (see ``formatting``).
 
 from __future__ import annotations
 
+import logging
 import os
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from typing import Any
 
+import torch
 from gliner2 import RegexValidator
 from gliner2.inference.engine import GLiNER2
 
@@ -29,11 +31,27 @@ from dcc_gliner_api.services.chunking import (
     split_text_into_chunks,
 )
 
+logger = logging.getLogger("ray.serve")
+
 DEFAULT_MODEL_ID = "fastino/gliner2-multi-v1"
 
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true")
+
+
+def _device() -> str:
+    """Pick where the model runs, preferring a GPU when one is present.
+
+    GLiNER2 loads its weights with ``map_location="cpu"`` unless told
+    otherwise, so without this the model runs on CPU even on a GPU node —
+    orders of magnitude slower. Set ``GLINER_DEVICE`` to override.
+    """
+    configured = os.environ.get("GLINER_DEVICE")
+    if configured:
+        return configured
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def _validators(specs: list[dict[str, Any]] | None) -> list[RegexValidator]:
@@ -49,10 +67,13 @@ class GlinerService:
     """Owns the GLiNER2 model lifecycle; the only code that touches the model."""
 
     def __init__(self, model_id: str | None = None):
+        device = _device()
+        logger.info("Loading GLiNER2 on %s", device)
         self.model: GLiNER2 = GLiNER2.from_pretrained(
             model_id or os.environ.get("GLINER_MODEL", DEFAULT_MODEL_ID),
             quantize=_env_flag("GLINER_QUANTIZE"),
             compile=_env_flag("GLINER_COMPILE"),
+            map_location=device,
         )
 
     def extract_entities(

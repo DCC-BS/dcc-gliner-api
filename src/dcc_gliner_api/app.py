@@ -15,10 +15,12 @@ responses; all model interaction lives in ``services.gliner_service``.
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import AsyncIterable
 
-from fastapi import FastAPI, HTTPException
+import torch
+from fastapi import FastAPI, Header, HTTPException
 from ray import serve
 
 from dcc_gliner_api.models import (
@@ -28,8 +30,13 @@ from dcc_gliner_api.models import (
     TaskState,
 )
 from dcc_gliner_api.models.entities import ExtractEntitiesBatchResponse, ExtractEntitiesResponse
+from dcc_gliner_api.services.chunking import split_text_into_chunks
 from dcc_gliner_api.services.gliner_service import GlinerService
 from dcc_gliner_api.services.task_store import Task, TaskStore
+
+# Ray Serve configures this logger, so messages reach the replica log with the
+# request id attached; a module logger would be filtered at WARNING.
+logger = logging.getLogger("ray.serve")
 
 app = FastAPI(
     title="GLiNER2 API",
@@ -45,7 +52,20 @@ def _ndjson(results):
         yield json.dumps(result, ensure_ascii=False) + "\n"
 
 
-@serve.deployment
+def _num_gpus() -> float:
+    """GPUs to reserve per replica.
+
+    Ray hides GPUs from an actor that did not ask for one, so without this the
+    replica sees no CUDA device however the model is loaded.
+    """
+    configured = os.environ.get("GLINER_NUM_GPUS")
+    if configured is not None:
+        return float(configured)
+
+    return 1.0 if torch.cuda.is_available() else 0.0
+
+
+@serve.deployment(ray_actor_options={"num_gpus": _num_gpus()})
 @serve.ingress(app)
 class GLiNER2Deployment:
     def __init__(self):
@@ -72,8 +92,20 @@ class GLiNER2Deployment:
         summary="Submit an entity extraction and poll for it",
         status_code=202,
     )
-    async def extract_entities_async(self, request: ExtractEntitiesRequest) -> TaskAccepted:
+    async def extract_entities_async(
+        self,
+        request: ExtractEntitiesRequest,
+        x_correlation_id: str | None = Header(default=None),
+    ) -> TaskAccepted:
         """Accept the work and return at once, so a long scan cannot time out."""
+        # Logged on arrival: if a caller reports an error but nothing shows up
+        # here, the request was rejected before it ever reached this service.
+        logger.info(
+            "extract_entities/async received: %d chars, %d chunks, correlation_id=%s",
+            len(request.text),
+            len(split_text_into_chunks(request.text)),
+            x_correlation_id or "-",
+        )
 
         async def run(task: Task) -> ExtractEntitiesResponse:
             def report(done: int, total: int) -> None:
@@ -90,7 +122,9 @@ class GLiNER2Deployment:
                 on_progress=report,
             )
 
-        return TaskAccepted(task_id=self.tasks.submit(run).id)
+        task_id = self.tasks.submit(run).id
+        logger.info("extract_entities/async accepted: task_id=%s", task_id)
+        return TaskAccepted(task_id=task_id)
 
     @app.get("/task/{task_id}", summary="Status of a submitted task")
     async def task_state(self, task_id: str) -> TaskState:
@@ -131,4 +165,4 @@ class GLiNER2Deployment:
             yield doc_result
 
 
-app = GLiNER2Deployment.bind()  # ty: ignore[unresolved-attribute]  # added by @serve.deployment
+app = GLiNER2Deployment.bind()  # added by @serve.deployment
