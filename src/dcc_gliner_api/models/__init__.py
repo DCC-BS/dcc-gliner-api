@@ -8,6 +8,7 @@ from dcc_gliner_api.models.common import (
     ResultOptions,
 )
 from dcc_gliner_api.models.entities import BatchExtractEntitiesRequest, ExtractEntitiesRequest
+from dcc_gliner_api.models.tasks import TaskAccepted, TaskState
 
 __all__ = [
     "BatchExtractEntitiesRequest",
@@ -20,4 +21,6 @@ __all__ = [
     "ExtractRequest",
     "RelationTypes",
     "ResultOptions",
+    "TaskAccepted",
+    "TaskState",
 ]

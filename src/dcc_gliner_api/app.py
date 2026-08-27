@@ -13,19 +13,23 @@ This layer only translates HTTP requests into service calls and shapes
 responses; all model interaction lives in ``services.gliner_service``.
 """
 
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from ray import serve
 
 from dcc_gliner_api.models import (
     BatchExtractEntitiesRequest,
     ExtractEntitiesRequest,
+    TaskAccepted,
+    TaskState,
 )
-from dcc_gliner_api.models.entities import ExtractEntitiesBatchResponse
+from dcc_gliner_api.models.entities import ExtractEntitiesBatchResponse, ExtractEntitiesResponse
 from dcc_gliner_api.services.gliner_service import GlinerService
+from dcc_gliner_api.services.task_store import Task, TaskStore
 
 app = FastAPI(
     title="GLiNER2 API",
@@ -53,6 +57,7 @@ class GLiNER2Deployment:
             debugpy.wait_for_client()  # noqa: T100
 
         self.service = GlinerService()
+        self.tasks = TaskStore()
 
     @app.post("/extract_entities", summary="Entity extraction (full-document chunk scan)")
     def extract_entities(self, request: ExtractEntitiesRequest):
@@ -61,6 +66,53 @@ class GLiNER2Deployment:
             request.entity_types,
             threshold=request.threshold,
         )
+
+    @app.post(
+        "/extract_entities/async",
+        summary="Submit an entity extraction and poll for it",
+        status_code=202,
+    )
+    async def extract_entities_async(self, request: ExtractEntitiesRequest) -> TaskAccepted:
+        """Accept the work and return at once, so a long scan cannot time out."""
+
+        async def run(task: Task) -> ExtractEntitiesResponse:
+            def report(done: int, total: int) -> None:
+                task.progress = done / total if total else None
+                task.touch()
+
+            # The model call is blocking, so it runs off the event loop and the
+            # status endpoint stays responsive while it works.
+            return await asyncio.to_thread(
+                self.service.extract_entities,
+                request.text,
+                request.entity_types,
+                threshold=request.threshold,
+                on_progress=report,
+            )
+
+        return TaskAccepted(task_id=self.tasks.submit(run).id)
+
+    @app.get("/task/{task_id}", summary="Status of a submitted task")
+    async def task_state(self, task_id: str) -> TaskState:
+        task = self.tasks.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Unknown task")
+
+        return TaskState(
+            task_id=task.id,
+            status=task.status,
+            progress=task.progress,
+            resource_id=task.resource_id,
+            error=task.error,
+        )
+
+    @app.get("/resource/{resource_id}", summary="Collect a finished result (once)")
+    async def resource(self, resource_id: str) -> ExtractEntitiesResponse:
+        """Hand the result over and drop it, so results do not pile up."""
+        found, result = self.tasks.take_resource(resource_id)
+        if not found:
+            raise HTTPException(status_code=404, detail="Unknown or already collected resource")
+        return result
 
     @app.post(
         "/batch_extract_entities",

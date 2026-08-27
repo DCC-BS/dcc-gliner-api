@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from gliner2 import RegexValidator
@@ -61,12 +61,14 @@ class GlinerService:
         entity_types: Any,
         *,
         threshold: float = 0.5,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> ExtractEntitiesResponse:
         return next(
             self.batch_extract_entities(
                 [text],
                 entity_types,
                 threshold=threshold,
+                on_progress=on_progress,
             )
         )
 
@@ -77,6 +79,7 @@ class GlinerService:
         *,
         batch_size: int = 8,
         threshold: float = 0.5,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> Iterator[ExtractEntitiesBatchResponse]:
         """Lazily yield one merged entity result per document, in input order.
 
@@ -86,7 +89,15 @@ class GlinerService:
         soon as that window completes — ready for HTTP streaming. The chunk
         scan (split, remap, merge) runs per document inside the window.
         """
-        windows = iter_batch_windows((split_text_into_chunks(text) for text in texts), batch_size)
+        # Chunks are the unit of work, so counting them up front lets a caller
+        # watch a single long document progress instead of waiting on one yield.
+        documents = [split_text_into_chunks(text) for text in texts]
+        total_chunks = sum(len(chunks) for chunks in documents)
+        done_chunks = 0
+        if on_progress:
+            on_progress(0, total_chunks)
+
+        windows = iter_batch_windows(iter(documents), batch_size)
 
         current_doc_index = 1
         for window in windows:
@@ -109,6 +120,10 @@ class GlinerService:
 
                 entities: dict[str, list[Entity]] = defaultdict(list, [])
                 for chunk, raw in zip(chunks, document_chunks, strict=True):
+                    # A chunk with no words (blank page, table rule) annotates
+                    # to nothing at all, not to an empty entity map.
+                    if not raw["entities"]:
+                        continue
                     for label, entity_list in raw["entities"][0].items():
                         for entity_map in entity_list:
                             relative_enity = Entity.model_validate(entity_map)
@@ -117,3 +132,7 @@ class GlinerService:
                 progress = BatchProgress.new(current_doc_index, length=len(texts))
                 current_doc_index += 1
                 yield ExtractEntitiesBatchResponse(entities=merge_detections(entities), progress=progress)
+
+            done_chunks += sum(len(chunks) for chunks in window)
+            if on_progress:
+                on_progress(done_chunks, total_chunks)
