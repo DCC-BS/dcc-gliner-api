@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from dcc_gliner_api.services.gliner_service import GlinerService
+from dcc_gliner_api.services.memory_plan import ActivationCost
 
 
 class StubModel:
@@ -48,6 +49,7 @@ def service():
     svc._scanning = threading.Lock()
     svc._budget_bytes = 32 * 1024**3
     svc._sequence_sizer = lambda entity_types, sample: 512
+    svc._cost = ActivationCost(bytes_per_token_squared=360, source="test")
     return svc
 
 

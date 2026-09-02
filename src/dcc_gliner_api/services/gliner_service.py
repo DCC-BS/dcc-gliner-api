@@ -32,7 +32,14 @@ from dcc_gliner_api.services.chunking import (
     remap_enity,
     split_text_into_chunks,
 )
-from dcc_gliner_api.services.memory_plan import DEFAULT_SAFETY_MARGIN, plan_scan, split_labels
+from dcc_gliner_api.services.memory_plan import (
+    DEFAULT_SAFETY_MARGIN,
+    ActivationCost,
+    derived_cost,
+    plan_scan,
+    profile_cost,
+    split_labels,
+)
 
 logger = logging.getLogger("ray.serve")
 
@@ -116,7 +123,36 @@ class GlinerService:
         # Measuring a sequence needs the model's own tokenizer; taking it as a
         # collaborator lets a caller measure differently, or not at all.
         self._sequence_sizer = sequence_sizer or self._tokenized_length
+        self._cost = profile_cost(self._weigh_one_chunk, self._derived_cost())
+        logger.info(
+            "Activation cost: %d bytes per token pair (%s)",
+            self._cost.bytes_per_token_squared,
+            self._cost.source,
+        )
         logger.info("Activation budget: %.2f GiB", self._budget_bytes / 1024**3)
+
+    def _derived_cost(self) -> ActivationCost:
+        """What the model's own shape says a chunk costs."""
+        config = self.model.encoder.config
+        element_bytes = next(self.model.parameters()).element_size()
+        return derived_cost(num_heads=config.num_attention_heads, bytes_per_element=element_bytes)
+
+    def _weigh_one_chunk(self, words: int) -> tuple[int, int]:
+        """Run one chunk of roughly ``words`` words and report what it cost."""
+        if not torch.cuda.is_available() or _device() == "cpu":
+            raise RuntimeError("no GPU to weigh")
+
+        probe_text = " ".join(["Andreas Mueller wohnt in Muttenz."] * max(1, words // 5))
+        entity_types = {"person": "Name einer Person", "ort": "Name einer Gemeinde"}
+        sequence_length = self._tokenized_length(entity_types, probe_text)
+
+        torch.cuda.synchronize()
+        weights = torch.cuda.memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        self._scan_chunks([probe_text], entity_types, batch_size=1, threshold=0.5)
+        torch.cuda.synchronize()
+
+        return torch.cuda.max_memory_allocated() - weights, sequence_length
 
     def _tokenized_length(self, entity_types: Any, sample: str) -> int:
         """Tokens one chunk is scanned in, schema included."""
@@ -213,7 +249,7 @@ class GlinerService:
 
         sample = next((chunk.text for chunks in documents for chunk in chunks), "")
         sequence_length = self._sequence_sizer(entity_types, sample)
-        plan = plan_scan(self._budget_bytes, sequence_length, batch_size, len(entity_types))
+        plan = plan_scan(self._budget_bytes, sequence_length, batch_size, len(entity_types), self._cost)
         groups = split_labels(entity_types, plan.schema_groups)
         logger.info(
             "Scanning %d chunk(s): sequence %d tokens, batch %d, schema in %d group(s)",

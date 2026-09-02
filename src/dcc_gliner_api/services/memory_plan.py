@@ -14,21 +14,97 @@ single chunk will not fit, into how many groups the schema has to be split.
 
 from __future__ import annotations
 
+import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
-#: Activation bytes per chunk per token squared.
+logger = logging.getLogger("ray.serve")
+
+#: Score tensors the attention keeps alive at once.
 #:
-#: Measured on an RTX 5090 with mdeberta-v3-base: peak allocation minus the
-#: 1.14 GiB of weights, over batch x sequence^2, came to 267-360 bytes across
-#: sequences of 1017 to 3142 tokens and batches of 1 to 8. The largest is taken,
-#: since underestimating costs an out-of-memory error and overestimating only
-#: costs a smaller batch.
-BYTES_PER_CHUNK_TOKEN_SQUARED = 360
+#: DeBERTa's disentangled attention holds several [batch*heads, seq, seq]
+#: tensors together — the content scores, the two relative-position terms with
+#: their gathered copies, the accumulator and the softmax output. Counting them
+#: from the forward pass gives the cost per head; it is only used when the
+#: replica cannot weigh itself, and it is deliberately generous.
+LIVE_SCORE_TENSORS = 8
+
+#: Words of text the two profiling passes run, short and long. Far enough
+#: apart that the growth between them is the square term rather than noise.
+PROBE_WORDS_SHORT = 64
+PROBE_WORDS_LONG = 320
 
 #: Share of the free memory a scan may claim, leaving room for fragmentation
 #: and for whatever else shares the card.
 DEFAULT_SAFETY_MARGIN = 0.8
+
+
+@dataclass(frozen=True)
+class ActivationCost:
+    """What one chunk costs, per pair of tokens in its sequence.
+
+    Attention compares every token with every other, so the cost of a chunk
+    grows with the square of its sequence, and a batch multiplies it:
+
+        bytes = cost x batch x sequence^2
+
+    The number is weighed on the card at startup where that is possible, and
+    derived from the model's own shape where it is not. ``source`` says which,
+    so a log line can be believed or doubted accordingly.
+    """
+
+    bytes_per_token_squared: int
+    source: str
+
+    def memory_for(self, batch_size: int, sequence_length: int) -> int:
+        """Activation bytes one model call is expected to need."""
+        return self.bytes_per_token_squared * batch_size * sequence_length * sequence_length
+
+
+def derived_cost(num_heads: int, bytes_per_element: int) -> ActivationCost:
+    """The cost implied by the model's shape, for when it cannot be weighed."""
+    return ActivationCost(
+        bytes_per_token_squared=LIVE_SCORE_TENSORS * num_heads * bytes_per_element,
+        source="derived",
+    )
+
+
+def profile_cost(probe: Callable[[int], tuple[int, int]], fallback: ActivationCost) -> ActivationCost:
+    """Weigh two forward passes and read the cost off the difference.
+
+    A single pass would fold in what the model spends regardless of length —
+    embeddings, the counting head, the allocator's own blocks — and charge it
+    to the sequence, which overstates the cost of every later scan. Two passes
+    of different lengths separate the part that grows with the square from the
+    part that does not:
+
+        cost = (bytes_long - bytes_short) / (long^2 - short^2)
+
+    Args:
+        probe: Runs one chunk of about the requested word count and returns the
+            activation bytes it peaked at, with the sequence length it ran.
+        fallback: Used when the probes cannot run — on a CPU replica, or when a
+            pass fails.
+
+    Returns:
+        The measured cost, or ``fallback`` when it could not be measured or
+        came out implausible.
+    """
+    try:
+        short_bytes, short_length = probe(PROBE_WORDS_SHORT)
+        long_bytes, long_length = probe(PROBE_WORDS_LONG)
+    except Exception:
+        logger.warning("Could not profile activation memory; using the derived cost", exc_info=True)
+        return fallback
+
+    span = long_length * long_length - short_length * short_length
+    growth = long_bytes - short_bytes
+    if span <= 0 or growth <= 0:
+        logger.warning("Activation profile came out flat; using the derived cost")
+        return fallback
+
+    return ActivationCost(bytes_per_token_squared=math.ceil(growth / span), source="profiled")
 
 
 @dataclass(frozen=True)
@@ -41,12 +117,13 @@ class ScanPlan:
     schema_groups: int
 
 
-def memory_for(batch_size: int, sequence_length: int) -> int:
-    """Activation bytes one model call is expected to need."""
-    return BYTES_PER_CHUNK_TOKEN_SQUARED * batch_size * sequence_length * sequence_length
-
-
-def plan_scan(budget_bytes: int, sequence_length: int, wanted_batch: int, label_count: int) -> ScanPlan:
+def plan_scan(
+    budget_bytes: int,
+    sequence_length: int,
+    wanted_batch: int,
+    label_count: int,
+    cost: ActivationCost,
+) -> ScanPlan:
     """Work out the largest batch that fits, splitting the schema if none does.
 
     Args:
@@ -54,6 +131,7 @@ def plan_scan(budget_bytes: int, sequence_length: int, wanted_batch: int, label_
         sequence_length: Tokens in one chunk's input, schema included.
         wanted_batch: Chunks the caller would like to send at once.
         label_count: Labels in the schema, an upper bound on the split.
+        cost: What a chunk costs per pair of tokens.
 
     Returns:
         The batch size to use, and the number of groups to split the schema
@@ -61,7 +139,7 @@ def plan_scan(budget_bytes: int, sequence_length: int, wanted_batch: int, label_
         the smallest possible scan, and the caller runs it whichever way the
         arithmetic came out.
     """
-    fits = budget_bytes // memory_for(1, sequence_length)
+    fits = budget_bytes // cost.memory_for(1, sequence_length)
 
     if fits >= 1:
         return ScanPlan(batch_size=min(wanted_batch, int(fits)), schema_groups=1)
@@ -69,7 +147,7 @@ def plan_scan(budget_bytes: int, sequence_length: int, wanted_batch: int, label_
     # One chunk does not fit, so the schema itself is the problem. Its share of
     # the sequence shrinks with each group; the chunk's own tokens do not, which
     # is why this solves for the ratio rather than dividing the length.
-    needed = memory_for(1, sequence_length) / max(budget_bytes, 1)
+    needed = cost.memory_for(1, sequence_length) / max(budget_bytes, 1)
     groups = min(label_count, max(2, math.ceil(math.sqrt(needed))))
 
     return ScanPlan(batch_size=1, schema_groups=groups)
