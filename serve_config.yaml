@@ -21,6 +21,11 @@ applications:
 - name: dcc_gliner_api
   route_prefix: /
   import_path: dcc_gliner_api.app:app
-  runtime_env: {}
+  runtime_env:
+    env_vars:
+      # Let the allocator grow a segment instead of keeping whole blocks
+      # reserved: a scan whose batch shrinks between documents otherwise
+      # leaves gigabytes reserved but unusable.
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
   deployments:
   - name: GLiNER2Deployment

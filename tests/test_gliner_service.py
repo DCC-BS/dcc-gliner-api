@@ -5,6 +5,8 @@ mention with chunk-local offsets, exercising the real split -> model call ->
 remap -> merge path without loading torch weights.
 """
 
+import threading
+
 import pytest
 
 from dcc_gliner_api.services.gliner_service import GlinerService
@@ -40,8 +42,12 @@ class StubModel:
 
 @pytest.fixture
 def service():
+    """A service with a stubbed model, a roomy budget and a fixed sequence."""
     svc = GlinerService.__new__(GlinerService)
     svc.model = StubModel()
+    svc._scanning = threading.Lock()
+    svc._budget_bytes = 32 * 1024**3
+    svc._sequence_sizer = lambda entity_types, sample: 512
     return svc
 
 
