@@ -18,6 +18,19 @@ run = [
 description = "Start the Ray Serve server"
 run = "uv sync --quiet && .venv/bin/ray serve run serve_config.yaml"
 
+[tasks.stop]
+description = "Stop the Ray Serve server"
+run = [
+    # Drains the application first so in-flight scans finish, then takes the
+    # local Ray cluster down with it; `serve run` exits once its app is gone.
+    ".venv/bin/ray serve shutdown --yes || true",
+    ".venv/bin/ray stop || true",
+]
+
+[tasks.status]
+description = "Show the Ray Serve application status"
+run = ".venv/bin/ray serve status"
+
 [tasks.debug]
 env = { RAY_DEBUG = 1}
 run = ".venv/bin/ray serve run serve_config.yaml"

@@ -12,9 +12,18 @@ class Entity(BaseModel):
     confidence: float
 
 
-class ExtractEntitiesRequest(ResultOptions):
-    text: str
+class ExtractEntitiesOptions(ResultOptions):
+    """Everything about an extraction except the text itself.
+
+    Split out so the text can arrive separately as an uploaded file without
+    the JSON callers having to change.
+    """
+
     entity_types: EntityTypes = Field(..., description="List of labels, or dict label -> description")
+
+
+class ExtractEntitiesRequest(ExtractEntitiesOptions):
+    text: str
 
 
 class BatchExtractEntitiesRequest(ResultOptions, BatchOptions):

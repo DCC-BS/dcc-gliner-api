@@ -14,17 +14,20 @@ responses; all model interaction lives in ``services.gliner_service``.
 """
 
 import asyncio
+import gzip
 import json
 import logging
 import os
 from collections.abc import AsyncIterable
+from typing import Annotated
 
 import torch
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from ray import serve
 
 from dcc_gliner_api.models import (
     BatchExtractEntitiesRequest,
+    ExtractEntitiesOptions,
     ExtractEntitiesRequest,
     TaskAccepted,
     TaskState,
@@ -50,6 +53,26 @@ app = FastAPI(
 def _ndjson(results):
     for result in results:
         yield json.dumps(result, ensure_ascii=False) + "\n"
+
+
+#: Magic number every gzip stream starts with.
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _decode_upload(raw: bytes, encoding: str) -> str:
+    """Read an uploaded document back into text.
+
+    A gzipped body is recognised by its own first two bytes rather than by
+    what the caller claims, since a proxy may rewrite the content type on the
+    way in.
+    """
+    if raw.startswith(_GZIP_MAGIC):
+        raw = gzip.decompress(raw)
+
+    try:
+        return raw.decode(encoding)
+    except (UnicodeDecodeError, LookupError) as e:
+        raise HTTPException(status_code=400, detail=f"Uploaded text is not valid {encoding}: {e}") from e
 
 
 def _num_gpus() -> float:
@@ -125,6 +148,30 @@ class GLiNER2Deployment:
         task_id = self.tasks.submit(run).id
         logger.info("extract_entities/async accepted: task_id=%s", task_id)
         return TaskAccepted(task_id=task_id)
+
+    @app.post(
+        "/extract_entities/async/upload",
+        summary="Submit an entity extraction whose text is uploaded as a file",
+        status_code=202,
+    )
+    async def extract_entities_async_upload(
+        self,
+        file: Annotated[UploadFile, File(description="The document, as text bytes, optionally gzipped")],
+        options: Annotated[str, Form(description="JSON body of an extraction request, without its text")],
+        charset: Annotated[str, Form(description="Encoding of the uploaded bytes")] = "utf-8",
+        x_correlation_id: str | None = Header(default=None),
+    ) -> TaskAccepted:
+        """Same work as ``/extract_entities/async``, with the text as an upload.
+
+        A document sent as a JSON string travels as one large inspectable
+        field, which a web application firewall between the two services will
+        refuse once it grows. As a file part it passes as an ordinary upload.
+        """
+        parsed = ExtractEntitiesOptions.model_validate_json(options)
+        text = _decode_upload(await file.read(), charset)
+        request = ExtractEntitiesRequest(text=text, **parsed.model_dump())
+
+        return await self.extract_entities_async(request, x_correlation_id)
 
     @app.get("/task/{task_id}", summary="Status of a submitted task")
     async def task_state(self, task_id: str) -> TaskState:

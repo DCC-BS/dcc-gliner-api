@@ -63,6 +63,11 @@ def _entity_map_of(raw: dict[str, Any]) -> EntityMap:
     return entities[0] if entities else {}
 
 
+def _has_content(text: str) -> bool:
+    """Whether a chunk holds anything a model could annotate."""
+    return any(character.isalnum() for character in text)
+
+
 class GlinerService:
     """Owns the GLiNER2 model lifecycle; the only code that touches the model."""
 
@@ -141,13 +146,22 @@ class GlinerService:
 
                 entities: dict[str, list[Entity]] = defaultdict(list, [])
                 for chunk, raw in zip(chunks, document_chunks, strict=True):
-                    # A chunk with no words (blank page, table rule) annotates
-                    # to nothing at all, not to an empty entity map.
-                    if not raw["entities"]:
+                    entity_map = _entity_map_of(raw)
+                    if not entity_map:
+                        # A chunk with no words (blank page, table rule) has
+                        # nothing to annotate. One with words that annotates to
+                        # nothing has not been read, and losing that silently is
+                        # how a document comes back under-redacted.
+                        if _has_content(chunk.text):
+                            logger.warning(
+                                "Chunk annotated to nothing: %d chars, %d label(s)",
+                                len(chunk.text),
+                                len(entity_types),
+                            )
                         continue
-                    for label, entity_list in raw["entities"][0].items():
-                        for entity_map in entity_list:
-                            relative_enity = Entity.model_validate(entity_map)
+                    for label, entity_list in entity_map.items():
+                        for raw_entity in entity_list:
+                            relative_enity = Entity.model_validate(raw_entity)
                             entities[label].append(remap_enity(relative_enity, chunk))
 
                 progress = BatchProgress.new(current_doc_index, length=len(texts))
