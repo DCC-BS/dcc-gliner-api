@@ -156,20 +156,33 @@ class GLiNER2Deployment:
     )
     async def extract_entities_async_upload(
         self,
-        file: Annotated[UploadFile, File(description="The document, as text bytes, optionally gzipped")],
-        options: Annotated[str, Form(description="JSON body of an extraction request, without its text")],
+        file: Annotated[
+            UploadFile,
+            File(description="The document as text bytes, or the whole request as JSON; optionally gzipped"),
+        ],
+        options: Annotated[
+            str | None,
+            Form(description="JSON body of an extraction request, without its text; omit when the file carries it"),
+        ] = None,
         charset: Annotated[str, Form(description="Encoding of the uploaded bytes")] = "utf-8",
         x_correlation_id: str | None = Header(default=None),
     ) -> TaskAccepted:
-        """Same work as ``/extract_entities/async``, with the text as an upload.
+        """Same work as ``/extract_entities/async``, with the body as an upload.
 
-        A document sent as a JSON string travels as one large inspectable
-        field, which a web application firewall between the two services will
-        refuse once it grows. As a file part it passes as an ordinary upload.
+        A firewall between the two services reads form fields and JSON bodies
+        and refuses them once they grow — a schema of two dozen labels, each
+        with a paragraph describing it, is enough. A file part is not read that
+        way, so the whole request may travel as one: send it as the uploaded
+        JSON and leave ``options`` off. Sending the text alone with the options
+        beside it still works, for a caller with a small schema.
         """
-        parsed = ExtractEntitiesOptions.model_validate_json(options)
-        text = _decode_upload(await file.read(), charset)
-        request = ExtractEntitiesRequest(text=text, **parsed.model_dump())
+        uploaded = _decode_upload(await file.read(), charset)
+
+        if options is None:
+            request = ExtractEntitiesRequest.model_validate_json(uploaded)
+        else:
+            parsed = ExtractEntitiesOptions.model_validate_json(options)
+            request = ExtractEntitiesRequest(text=uploaded, **parsed.model_dump())
 
         return await self.extract_entities_async(request, x_correlation_id)
 
