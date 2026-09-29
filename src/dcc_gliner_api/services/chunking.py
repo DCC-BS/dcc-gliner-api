@@ -133,20 +133,16 @@ def remap_enity(entity: Entity, chunk: TextChunk) -> Entity:
 def merge_detections(entity_map: EntityMap) -> EntityMap:
     """Merge per-chunk detections into one map.
 
-    Per label, same-span overlapping detections collapse to the highest-confidence
-    one (an overlap artifact); distinct mentions at different positions survive.
+    Per label, overlapping detections collapse to the longest one, so a mention
+    a neighbouring chunk saw only in part ("Mueller" of "Andreas Mueller") never
+    displaces the whole. Distinct mentions at different positions survive.
     Output is in document order.
     """
-    labels: list[str] = []
-    for label in entity_map:
-        if label not in labels:
-            labels.append(label)
-    return {label: _merge_label(entity_map, label) for label in labels}
+    return {label: _merge_label(items) for label, items in entity_map.items()}
 
 
-def _merge_label(entity_map: EntityMap, label: str) -> list[Entity]:
-    items = entity_map.get(label, [])
-    ranked = sorted(items, key=lambda i: (-i.confidence, i.start, i.end))
+def _merge_label(items: list[Entity]) -> list[Entity]:
+    ranked = sorted(items, key=lambda i: (i.start - i.end, -i.confidence, i.start))
     selected: list[Entity] = []
     for item in ranked:
         if not any(_spans_overlap(item, chosen) for chosen in selected):

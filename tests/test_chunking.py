@@ -168,13 +168,11 @@ class TestMerge:
         merged = merge_detections({"company": [first, second]})
         assert merged["company"] == [first, second]
 
-    def test_overlap_collapses_to_higher_confidence_regardless_of_length(self):
+    def test_overlap_collapses_to_longest_regardless_of_confidence(self):
         fragment = mention("Cook", 0.99, 104, 108)
         full = mention("Tim Cook", 0.80, 100, 108)
-        assert merge_detections({"person": [fragment, full]})["person"] == [fragment]
-        assert merge_detections({"person": [full, fragment]})["person"] == [fragment]
-        weaker_fragment = mention("Cook", 0.70, 104, 108)
-        assert merge_detections({"person": [weaker_fragment, full]})["person"] == [full]
+        assert merge_detections({"person": [fragment, full]})["person"] == [full]
+        assert merge_detections({"person": [full, fragment]})["person"] == [full]
 
     def test_identical_span_keeps_best_confidence(self):
         a = mention("Apple", 0.8, 10, 15)
