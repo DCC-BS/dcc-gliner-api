@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 from collections import defaultdict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 import torch
@@ -27,6 +27,7 @@ from dcc_gliner_api.models.entities import Entity, ExtractEntitiesBatchResponse,
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     EntityMap,
+    TextChunk,
     iter_batch_windows,
     merge_detections,
     remap_enity,
@@ -44,6 +45,9 @@ from dcc_gliner_api.services.memory_plan import (
 logger = logging.getLogger("ray.serve")
 
 DEFAULT_MODEL_ID = "fastino/gliner2-multi-v1"
+
+#: Chunks one model call takes, unless the memory plan reduces it.
+DEFAULT_BATCH_SIZE = 8
 
 
 def _env_flag(name: str) -> bool:
@@ -96,6 +100,34 @@ def _activation_budget(device: str) -> int:
 def _has_content(text: str) -> bool:
     """Whether a chunk holds anything a model could annotate."""
     return any(character.isalnum() for character in text)
+
+
+def _gather_entities(
+    entities: dict[str, list[Entity]],
+    chunks: Iterable[TextChunk],
+    raw_chunks: list[dict[str, Any]],
+    entity_types: Any,
+) -> None:
+    """Read a scan's chunks into ``entities``, in chunk order.
+
+    A chunk with no words (blank page, table rule) has nothing to annotate.
+    One with words that annotates to nothing has not been read, and losing
+    that silently is how a document comes back under-redacted, so it warns.
+    """
+    for chunk, raw in zip(chunks, raw_chunks, strict=True):
+        entity_map = _entity_map_of(raw)
+        if not entity_map:
+            if _has_content(chunk.text):
+                logger.warning(
+                    "Chunk annotated to nothing: %d chars, %d label(s)",
+                    len(chunk.text),
+                    len(entity_types),
+                )
+            continue
+        for label, entity_list in entity_map.items():
+            for raw_entity in entity_list:
+                relative_entity = Entity.model_validate(raw_entity)
+                entities[label].append(remap_enity(relative_entity, chunk))
 
 
 class GlinerService:
@@ -189,14 +221,49 @@ class GlinerService:
         threshold: float = 0.5,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> ExtractEntitiesResponse:
-        return next(
-            self.batch_extract_entities(
-                [text],
-                entity_types,
-                threshold=threshold,
-                on_progress=on_progress,
-            )
+        """Scan one text, and say where it stands between model calls.
+
+        The batch scan only reports progress as it is driven past a yield, so
+        the single-document call — one ``next()`` — heard it exactly once, at
+        zero, and kept it there for however long the scan took. Here the
+        document's chunks are scanned in batch-sized slices, and each slice's
+        count is passed on as it is done, so a long scan reads as a moving
+        fraction rather than a stuck zero.
+        """
+        chunks = split_text_into_chunks(text)
+        total_chunks = len(chunks)
+        if on_progress:
+            on_progress(0, total_chunks)
+
+        sample = chunks[0].text if chunks else ""
+        sequence_length = self._sequence_sizer(entity_types, sample)
+        plan = plan_scan(self._budget_bytes, sequence_length, DEFAULT_BATCH_SIZE, len(entity_types), self._cost)
+        groups = split_labels(entity_types, plan.schema_groups)
+        logger.info(
+            "Scanning %d chunk(s): sequence %d tokens, batch %d, schema in %d group(s)",
+            total_chunks,
+            sequence_length,
+            plan.batch_size,
+            plan.schema_groups,
         )
+
+        entities: dict[str, list[Entity]] = defaultdict(list, [])
+        done_chunks = 0
+        for start in range(0, total_chunks, plan.batch_size):
+            slice_chunks = chunks[start : start + plan.batch_size]
+            raw_chunks = self._scan_groups(
+                [chunk.text for chunk in slice_chunks],
+                groups,
+                batch_size=plan.batch_size,
+                threshold=threshold,
+            )
+            _gather_entities(entities, slice_chunks, raw_chunks, entity_types)
+
+            done_chunks += len(slice_chunks)
+            if on_progress:
+                on_progress(done_chunks, total_chunks)
+
+        return ExtractEntitiesResponse(entities=merge_detections(entities))
 
     def _scan_groups(
         self,
@@ -276,24 +343,7 @@ class GlinerService:
                 offset += len(chunks)
 
                 entities: dict[str, list[Entity]] = defaultdict(list, [])
-                for chunk, raw in zip(chunks, document_chunks, strict=True):
-                    entity_map = _entity_map_of(raw)
-                    if not entity_map:
-                        # A chunk with no words (blank page, table rule) has
-                        # nothing to annotate. One with words that annotates to
-                        # nothing has not been read, and losing that silently is
-                        # how a document comes back under-redacted.
-                        if _has_content(chunk.text):
-                            logger.warning(
-                                "Chunk annotated to nothing: %d chars, %d label(s)",
-                                len(chunk.text),
-                                len(entity_types),
-                            )
-                        continue
-                    for label, entity_list in entity_map.items():
-                        for raw_entity in entity_list:
-                            relative_enity = Entity.model_validate(raw_entity)
-                            entities[label].append(remap_enity(relative_enity, chunk))
+                _gather_entities(entities, chunks, document_chunks, entity_types)
 
                 progress = BatchProgress.new(current_doc_index, length=len(texts))
                 current_doc_index += 1

@@ -6,10 +6,12 @@ remap -> merge path without loading torch weights.
 """
 
 import threading
+from itertools import pairwise
 
 import pytest
 
-from dcc_gliner_api.services.gliner_service import GlinerService
+from dcc_gliner_api.services.chunking import split_text_into_chunks
+from dcc_gliner_api.services.gliner_service import DEFAULT_BATCH_SIZE, GlinerService
 from dcc_gliner_api.services.memory_plan import ActivationCost
 
 
@@ -113,3 +115,43 @@ def test_progress_reports_document_index(service):
     assert [r.progress.current for r in results] == [1, 2, 3]
     assert [r.progress.length for r in results] == [3, 3, 3]
     assert [r.progress.progress for r in results] == [1 / 3, 2 / 3, 3 / 3]
+
+
+def test_single_document_starts_at_zero_and_ends_at_done(service):
+    """One document's task ticks from zero to done, not zero to never."""
+    text = " ".join(f"w{i}" for i in range(4))
+    reports: list[tuple[int, int]] = []
+    service.extract_entities(text, ["probe"], on_progress=lambda done, total: reports.append((done, total)))
+    assert reports == [(0, 1), (1, 1)]
+
+
+def test_single_document_ticks_between_model_calls(service):
+    """A long scan reports after every model call, not only once at zero."""
+    text = " ".join(f"w{i}" for i in range(3000))
+    total = len(split_text_into_chunks(text))
+    assert total > DEFAULT_BATCH_SIZE  # several slices, so more than one call
+
+    reports: list[tuple[int, int]] = []
+    service.extract_entities(text, ["probe"], on_progress=lambda done, total: reports.append((done, total)))
+
+    assert reports[0] == (0, total)
+    slice_sizes = [after - before for (before, _), (after, _) in pairwise(reports)]
+    assert sum(slice_sizes) == total  # every chunk accounted for exactly once
+    assert all(0 < size <= DEFAULT_BATCH_SIZE for size in slice_sizes)
+    assert len(service.model.calls) == len(slice_sizes)
+    assert reports[-1] == (total, total)
+
+
+def test_a_document_is_seen_whole_by_the_single_scan(service):
+    text = " ".join(f"w{i}" for i in range(1000))
+    result = service.extract_entities(text, ["probe"])
+    items = result.entities["probe"]
+    assert len(items) > 1
+    for item in items:
+        assert text[item.start : item.end] == item.text
+
+
+def test_empty_text_is_one_chunk_of_nothing(service):
+    """An empty text still asks the model once, as it did before."""
+    service.extract_entities("", ["probe"])
+    assert service.model.calls == [[""]]
