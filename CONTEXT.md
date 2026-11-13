@@ -21,7 +21,7 @@ Processing a document by extracting from each chunk in sequence and merging the 
 _Avoid_: Long read, pagination
 
 **Chunk**:
-One overlapping word window of a document, with offsets into the original text.
+One overlapping word window of a document, with offsets into the original text. Bounded in words and in the subword tokens it reads to; a single word over the token bound is cut at character boundaries.
 _Avoid_: Window, slice, segment
 
 **Global span**:

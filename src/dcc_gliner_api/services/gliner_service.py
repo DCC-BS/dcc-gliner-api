@@ -4,12 +4,18 @@ Entity extraction runs as a chunk scan (see ``chunking``): the document is split
 into overlapping chunks, each chunk is extracted with spans and confidence, spans
 are remapped to global offsets, and overlap artifacts are merged away.
 
+Every chunk is measured before it is scanned, and each model call is sized for
+the longest chunk it carries (see ``memory_plan``). Sizing a whole document by
+its first chunk is how a cover page of prose followed by pages of links or
+encoded data asked for many times the memory the card had.
+
 All other capabilities are thin delegates that keep ``format_results=False`` so
 the upstream dedup formatter never drops repeated mentions (see ``formatting``).
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import threading
@@ -26,8 +32,11 @@ from dcc_gliner_api.models.common import BatchProgress
 from dcc_gliner_api.models.entities import Entity, ExtractEntitiesBatchResponse, ExtractEntitiesResponse
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
+    MAX_CHUNK_TOKENS,
     EntityMap,
     TextChunk,
+    bound_chunk_tokens,
+    count_text_tokens,
     iter_batch_windows,
     merge_detections,
     remap_enity,
@@ -36,6 +45,7 @@ from dcc_gliner_api.services.chunking import (
 from dcc_gliner_api.services.memory_plan import (
     DEFAULT_SAFETY_MARGIN,
     ActivationCost,
+    ScanPlan,
     derived_cost,
     plan_scan,
     profile_cost,
@@ -138,7 +148,8 @@ class GlinerService:
         model_id: str | None = None,
         *,
         budget_bytes: int | None = None,
-        sequence_sizer: Callable[[Any, str], int] | None = None,
+        schema_sizer: Callable[[Any], int] | None = None,
+        word_tokens: Callable[[str], int] | None = None,
     ):
         device = _device()
         logger.info("Loading GLiNER2 on %s", device)
@@ -152,9 +163,10 @@ class GlinerService:
         # the same memory twice and neither would know about the other.
         self._scanning = threading.Lock()
         self._budget_bytes = budget_bytes if budget_bytes is not None else _activation_budget(device)
-        # Measuring a sequence needs the model's own tokenizer; taking it as a
-        # collaborator lets a caller measure differently, or not at all.
-        self._sequence_sizer = sequence_sizer or self._tokenized_length
+        # Measuring a sequence needs the model's own tokenizer; taking both
+        # halves as collaborators lets a caller measure differently.
+        self._schema_sizer = schema_sizer or self._schema_length
+        self._word_tokens = word_tokens or self._subword_counter()
         self._cost = profile_cost(self._weigh_one_chunk, self._derived_cost())
         logger.info(
             "Activation cost: %d bytes per token pair (%s)",
@@ -185,6 +197,48 @@ class GlinerService:
         torch.cuda.synchronize()
 
         return torch.cuda.max_memory_allocated() - weights, sequence_length
+
+    def _subword_counter(self) -> Callable[[str], int]:
+        """Subword tokens one word is read in, as the processor reads it.
+
+        The processor lower-cases and tokenises word by word, so a document's
+        length in tokens is the sum over its words. Words repeat, so it is
+        cached.
+        """
+        tokenize = self.model.processor.tokenizer.tokenize
+
+        @functools.lru_cache(maxsize=65536)
+        def count(word: str) -> int:
+            return len(tokenize(word.lower()))
+
+        return count
+
+    def _schema_length(self, entity_types: Any) -> int:
+        """Tokens the schema adds to every chunk, separators included."""
+        return self._tokenized_length(entity_types, "")
+
+    def _chunks_of(self, text: str) -> list[TextChunk]:
+        """The document's chunks, none reading to more than the bound."""
+        return bound_chunk_tokens(text, split_text_into_chunks(text), self._word_tokens, MAX_CHUNK_TOKENS)
+
+    def _sequence_lengths(self, entity_types: Any, chunks: Iterable[TextChunk]) -> list[int]:
+        """Tokens each chunk is scanned in, schema included."""
+        schema_length = self._schema_sizer(entity_types)
+        return [schema_length + count_text_tokens(chunk.text, self._word_tokens) for chunk in chunks]
+
+    def _plan(self, sequence_lengths: list[int], wanted_batch: int, label_count: int) -> ScanPlan:
+        """How to scan chunks of these lengths together: sized for the longest."""
+        return plan_scan(self._budget_bytes, max(sequence_lengths), wanted_batch, label_count, self._cost)
+
+    def _log_scan(self, sequence_lengths: list[int], plan: ScanPlan) -> None:
+        logger.info(
+            "Scanning %d chunk(s): sequence %d-%d tokens, batch %d, schema in %d group(s) for the longest",
+            len(sequence_lengths),
+            min(sequence_lengths),
+            max(sequence_lengths),
+            plan.batch_size,
+            plan.schema_groups,
+        )
 
     def _tokenized_length(self, entity_types: Any, sample: str) -> int:
         """Tokens one chunk is scanned in, schema included."""
@@ -226,37 +280,37 @@ class GlinerService:
         The batch scan only reports progress as it is driven past a yield, so
         the single-document call — one ``next()`` — heard it exactly once, at
         zero, and kept it there for however long the scan took. Here the
-        document's chunks are scanned in batch-sized slices, and each slice's
-        count is passed on as it is done, so a long scan reads as a moving
-        fraction rather than a stuck zero.
+        document's chunks are scanned in slices, and each slice's count is
+        passed on as it is done, so a long scan reads as a moving fraction
+        rather than a stuck zero.
+
+        Each slice is as many chunks as fit beside its longest one, so a run
+        of long chunks deep in the document is scanned in smaller calls
+        rather than in a batch sized for the prose at its start.
         """
-        chunks = split_text_into_chunks(text)
+        chunks = self._chunks_of(text)
         total_chunks = len(chunks)
         if on_progress:
             on_progress(0, total_chunks)
 
-        sample = chunks[0].text if chunks else ""
-        sequence_length = self._sequence_sizer(entity_types, sample)
-        plan = plan_scan(self._budget_bytes, sequence_length, DEFAULT_BATCH_SIZE, len(entity_types), self._cost)
-        groups = split_labels(entity_types, plan.schema_groups)
-        logger.info(
-            "Scanning %d chunk(s): sequence %d tokens, batch %d, schema in %d group(s)",
-            total_chunks,
-            sequence_length,
-            plan.batch_size,
-            plan.schema_groups,
-        )
+        lengths = self._sequence_lengths(entity_types, chunks)
+        self._log_scan(lengths, self._plan(lengths, DEFAULT_BATCH_SIZE, len(entity_types)))
 
         entities: dict[str, list[Entity]] = defaultdict(list, [])
         done_chunks = 0
-        for start in range(0, total_chunks, plan.batch_size):
+        start = 0
+        while start < total_chunks:
+            plan = self._plan(lengths[start : start + DEFAULT_BATCH_SIZE], DEFAULT_BATCH_SIZE, len(entity_types))
+            # The plan may only shrink as the slice does: a slice cut to the
+            # planned size holds no chunk longer than the one it was sized for.
             slice_chunks = chunks[start : start + plan.batch_size]
             raw_chunks = self._scan_groups(
                 [chunk.text for chunk in slice_chunks],
-                groups,
+                split_labels(entity_types, plan.schema_groups),
                 batch_size=plan.batch_size,
                 threshold=threshold,
             )
+            start += len(slice_chunks)
             _gather_entities(entities, slice_chunks, raw_chunks, entity_types)
 
             done_chunks += len(slice_chunks)
@@ -308,23 +362,21 @@ class GlinerService:
         """
         # Chunks are the unit of work, so counting them up front lets a caller
         # watch a single long document progress instead of waiting on one yield.
-        documents = [split_text_into_chunks(text) for text in texts]
+        documents = [self._chunks_of(text) for text in texts]
         total_chunks = sum(len(chunks) for chunks in documents)
         done_chunks = 0
         if on_progress:
             on_progress(0, total_chunks)
 
-        sample = next((chunk.text for chunks in documents for chunk in chunks), "")
-        sequence_length = self._sequence_sizer(entity_types, sample)
-        plan = plan_scan(self._budget_bytes, sequence_length, batch_size, len(entity_types), self._cost)
+        if not documents:
+            return
+
+        # The whole batch is planned for its longest chunk, so windows are cut
+        # to a size every one of them can be scanned at.
+        lengths = self._sequence_lengths(entity_types, (chunk for chunks in documents for chunk in chunks))
+        plan = self._plan(lengths, batch_size, len(entity_types))
         groups = split_labels(entity_types, plan.schema_groups)
-        logger.info(
-            "Scanning %d chunk(s): sequence %d tokens, batch %d, schema in %d group(s)",
-            total_chunks,
-            sequence_length,
-            plan.batch_size,
-            plan.schema_groups,
-        )
+        self._log_scan(lengths, plan)
 
         windows = iter_batch_windows(iter(documents), plan.batch_size)
 
