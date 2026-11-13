@@ -10,7 +10,7 @@ from itertools import pairwise
 
 import pytest
 
-from dcc_gliner_api.services.chunking import split_text_into_chunks
+from dcc_gliner_api.services.chunking import MAX_CHUNK_TOKENS, split_text_into_chunks
 from dcc_gliner_api.services.gliner_service import DEFAULT_BATCH_SIZE, GlinerService
 from dcc_gliner_api.services.memory_plan import ActivationCost
 
@@ -45,12 +45,13 @@ class StubModel:
 
 @pytest.fixture
 def service():
-    """A service with a stubbed model, a roomy budget and a fixed sequence."""
+    """A service with a stubbed model, a roomy budget and one token per word."""
     svc = GlinerService.__new__(GlinerService)
     svc.model = StubModel()
     svc._scanning = threading.Lock()
     svc._budget_bytes = 32 * 1024**3
-    svc._sequence_sizer = lambda entity_types, sample: 512
+    svc._schema_sizer = lambda entity_types: 128
+    svc._word_tokens = lambda word: 1
     svc._cost = ActivationCost(bytes_per_token_squared=360, source="test")
     return svc
 
@@ -155,3 +156,53 @@ def test_empty_text_is_one_chunk_of_nothing(service):
     """An empty text still asks the model once, as it did before."""
     service.extract_entities("", ["probe"])
     assert service.model.calls == [[""]]
+
+
+def _long_word_cost(word: str) -> int:
+    """Words named ``long…`` read to 200 tokens, every other word to one."""
+    return 200 if word.startswith("long") else 1
+
+
+def test_a_long_run_deep_in_a_document_is_scanned_in_smaller_calls(service):
+    """Sizing by the first chunk sent the long chunks in a batch of eight.
+
+    Prose up front, then chunks whose words are each hundreds of tokens: the
+    calls over the prose stay full, the calls over the long run shrink to what
+    fits beside its longest chunk.
+    """
+    service._word_tokens = _long_word_cost
+    service._schema_sizer = lambda entity_types: 0
+    # Room for eight prose chunks (~384 tokens), but only one ~1024-token chunk.
+    service._budget_bytes = service._cost.memory_for(1, 1100)
+
+    prose = " ".join(f"w{i}" for i in range(3000))
+    blob = " ".join(f"long{i}" for i in range(200))
+    service.extract_entities(prose + " " + blob, ["probe"])
+
+    sizes = [len(call) for call in service.model.calls]
+    assert sizes[0] == DEFAULT_BATCH_SIZE
+    assert sizes[-1] == 1
+    for call in service.model.calls:
+        longest = max(sum(_long_word_cost(word) for word in text.split()) for text in call)
+        assert service._cost.memory_for(len(call), longest) <= service._budget_bytes
+
+
+def test_no_chunk_reads_to_more_than_the_bound(service):
+    service._word_tokens = _long_word_cost
+    blob = " ".join(f"long{i}" for i in range(100))
+    service.extract_entities("Kopfzeile " + blob, ["probe"])
+
+    for call in service.model.calls:
+        for text in call:
+            assert sum(_long_word_cost(word) for word in text.split()) <= MAX_CHUNK_TOKENS
+
+
+def test_a_batch_is_planned_for_its_longest_chunk(service):
+    service._word_tokens = _long_word_cost
+    service._schema_sizer = lambda entity_types: 0
+    service._budget_bytes = service._cost.memory_for(2, 1100)
+
+    texts = ["kurz und klar"] * 4 + [" ".join(f"long{i}" for i in range(5))]
+    list(service.batch_extract_entities(texts, ["probe"], batch_size=8))
+
+    assert all(len(call) <= 2 for call in service.model.calls)

@@ -12,6 +12,8 @@ from dcc_gliner_api.models.entities import Entity
 from dcc_gliner_api.services.chunking import (
     CHUNK_SIZE,
     TextChunk,
+    bound_chunk_tokens,
+    count_text_tokens,
     iter_batch_windows,
     merge_detections,
     remap_spans,
@@ -237,3 +239,59 @@ class TestPipelineInvariant:
         assert texts == ["w5", "w300"]
         for item in merged["probe"]:
             assert document[item.start : item.end] == item.text
+
+
+def costly(word):
+    """Words named ``big…`` read to 50 tokens, ``huge…`` to ten per character."""
+    if word.startswith("huge"):
+        return 10 * len(word)
+    return 50 if word.startswith("big") else 1
+
+
+class TestBoundChunkTokens:
+    def test_chunks_within_the_bound_are_returned_unchanged(self, long_document):
+        chunks = split_text_into_chunks(long_document)
+        assert bound_chunk_tokens(long_document, chunks, lambda word: 1, max_tokens=1024) == chunks
+
+    def test_no_chunk_reads_to_more_than_the_bound(self):
+        document = "Kopf " + " ".join(f"big{i}" for i in range(500)) + " Fuss"
+        chunks = bound_chunk_tokens(document, split_text_into_chunks(document), costly, max_tokens=300)
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert count_text_tokens(chunk.text, costly) <= 300
+
+    def test_recut_chunks_keep_global_offsets(self):
+        document = "Kopf " + " ".join(f"big{i}" for i in range(500))
+        for chunk in bound_chunk_tokens(document, split_text_into_chunks(document), costly, max_tokens=300):
+            assert document[chunk.start_char : chunk.end_char] == chunk.text
+
+    def test_every_word_is_still_read(self):
+        document = " ".join(f"big{i}" for i in range(500))
+        chunks = bound_chunk_tokens(document, split_text_into_chunks(document), costly, max_tokens=300)
+        read = {word for chunk in chunks for word in chunk.text.split()}
+        assert read == set(document.split())
+
+    def test_recut_neighbours_overlap(self):
+        document = " ".join(f"big{i}" for i in range(300))
+        chunks = bound_chunk_tokens(document, split_text_into_chunks(document), costly, max_tokens=500)
+        for left, right in pairwise(chunks):
+            assert right.start_char < left.end_char
+            assert right.end_char > left.end_char
+
+    def test_one_word_over_the_bound_is_cut_into_pieces_that_fit(self):
+        giant = "huge" + "x" * 996
+        document = f"vorher {giant} nachher"
+        chunks = bound_chunk_tokens(document, split_text_into_chunks(document), costly, max_tokens=1000)
+
+        pieces = [chunk for chunk in chunks if chunk.text.startswith(("huge", "x"))]
+        assert len(pieces) > 1
+        assert "".join(piece.text for piece in pieces) == giant
+        for chunk in chunks:
+            assert count_text_tokens(chunk.text, costly) <= 1000
+            assert document[chunk.start_char : chunk.end_char] == chunk.text
+        assert any("vorher" in chunk.text for chunk in chunks)
+        assert any("nachher" in chunk.text for chunk in chunks)
+
+    def test_rejects_a_bound_of_zero(self):
+        with pytest.raises(ValueError, match="max_tokens"):
+            bound_chunk_tokens("text", split_text_into_chunks("text"), costly, max_tokens=0)
