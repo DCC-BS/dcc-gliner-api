@@ -63,11 +63,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Point the HuggingFace cache at the baked model location so no network is needed
 ENV HF_HOME=/app/.cache/huggingface
 
-# Let the CUDA allocator grow segments instead of reserving whole blocks.
-# `ray serve run` here takes the import path, not serve_config.yaml, so the
-# config's runtime_env never applies in the image; without this, memory freed
-# by one scan fragments and a later, smaller scan can still run out.
-ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# No PYTORCH_CUDA_ALLOC_CONF=expandable_segments here: it allocates through the
+# CUDA virtual memory API, which shared GPU slices (the UAT H100) do not
+# support, and the model then fails to load. Set it per deployment where the
+# card supports it; the scan plan alone keeps within the budget without it.
 
 # Ray Serve's HTTP proxy must listen on all interfaces for Docker port mapping
 ENV RAY_SERVE_DEFAULT_HTTP_HOST=0.0.0.0
